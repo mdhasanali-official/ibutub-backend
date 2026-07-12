@@ -42,7 +42,7 @@ app.get("/", (req, res) => {
 app.use("/api/auth", authRoutes);
 app.use("/api/admin", adminAuthRoutes);
 app.use("/api/admin", adminUserRoutes);
-app.use("/api/admin", adminDashboardRoutes);
+app.use("/api/admin", adminDashboardRoutes); 
 app.use("/api/download", downloadRoutes);
 
 const PORT = process.env.PORT || 5000;
