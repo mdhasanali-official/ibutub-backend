@@ -11,6 +11,15 @@ const SUPPORTED_HOSTS = [
   "fb.watch",
 ];
 
+const sanitizeFilename = (name) => {
+  if (!name) return "video";
+  const cleaned = name
+    .replace(/[^\x20-\x7E]/g, "")
+    .replace(/[/\\?%*:|"<>]/g, "")
+    .trim();
+  return cleaned.slice(0, 80) || "video";
+};
+
 exports.extractVideo = async (req, res) => {
   try {
     const { url } = req.body;
@@ -52,9 +61,11 @@ exports.streamVideo = async (req, res) => {
         .status(400)
         .json({ message: "url and format_id are required" });
 
+    const safeName = sanitizeFilename(filename);
+
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="${filename || "video"}.mp4"`,
+      `attachment; filename="${safeName}.mp4"`,
     );
     res.setHeader("Content-Type", "application/octet-stream");
 

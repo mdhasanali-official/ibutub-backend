@@ -7,8 +7,7 @@ const detectPlatform = (url) => {
   if (url.includes("youtube.com") || url.includes("youtu.be")) return "youtube";
   if (url.includes("tiktok.com")) return "tiktok";
   if (url.includes("instagram.com")) return "instagram";
-  if (url.includes("facebook.com") || url.includes("fb.watch"))
-    return "facebook";
+  if (url.includes("facebook.com") || url.includes("fb.watch")) return "facebook";
   return "unknown";
 };
 
@@ -68,7 +67,9 @@ const extractInfo = async (url) => {
 const streamDownload = (url, formatId, res) => {
   const args = [
     "-f",
-    formatId,
+    `${formatId}+bestaudio/${formatId}`,
+    "--merge-output-format",
+    "mp4",
     "--no-playlist",
     "--no-warnings",
     "-o",
