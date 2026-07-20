@@ -1,5 +1,6 @@
 //services/ytdlpService.js
 const { spawn } = require("child_process");
+const { getCookiesPath } = require("../utils/cookiesSetup");
 
 const YTDLP_BIN = "yt-dlp";
 
@@ -7,13 +8,22 @@ const detectPlatform = (url) => {
   if (url.includes("youtube.com") || url.includes("youtu.be")) return "youtube";
   if (url.includes("tiktok.com")) return "tiktok";
   if (url.includes("instagram.com")) return "instagram";
-  if (url.includes("facebook.com") || url.includes("fb.watch")) return "facebook";
+  if (url.includes("facebook.com") || url.includes("fb.watch"))
+    return "facebook";
   return "unknown";
+};
+
+const withCookies = (args) => {
+  const cookiesPath = getCookiesPath();
+  if (cookiesPath) {
+    return ["--cookies", cookiesPath, ...args];
+  }
+  return args;
 };
 
 const runYtdlpJson = (url) => {
   return new Promise((resolve, reject) => {
-    const args = ["-j", "--no-playlist", "--no-warnings", url];
+    const args = withCookies(["-j", "--no-playlist", "--no-warnings", url]);
     const proc = spawn(YTDLP_BIN, args);
 
     let stdout = "";
@@ -24,17 +34,25 @@ const runYtdlpJson = (url) => {
 
     proc.on("close", (code) => {
       if (code !== 0) {
+        console.error(`yt-dlp exited with code ${code}`);
+        console.error(`yt-dlp url: ${url}`);
+        console.error(`yt-dlp stderr: ${stderr}`);
         return reject(new Error(stderr || "yt-dlp extraction failed"));
       }
       try {
         const data = JSON.parse(stdout);
         resolve(data);
       } catch (err) {
+        console.error(`yt-dlp JSON parse failed: ${err.message}`);
+        console.error(`yt-dlp raw stdout: ${stdout.slice(0, 500)}`);
         reject(new Error("Failed to parse yt-dlp output"));
       }
     });
 
-    proc.on("error", (err) => reject(err));
+    proc.on("error", (err) => {
+      console.error(`yt-dlp spawn error: ${err.message}`);
+      reject(err);
+    });
   });
 };
 
@@ -65,7 +83,7 @@ const extractInfo = async (url) => {
 };
 
 const streamDownload = (url, formatId, res) => {
-  const args = [
+  const args = withCookies([
     "-f",
     `${formatId}+bestaudio/${formatId}`,
     "--merge-output-format",
@@ -75,21 +93,27 @@ const streamDownload = (url, formatId, res) => {
     "-o",
     "-",
     url,
-  ];
+  ]);
 
   const proc = spawn(YTDLP_BIN, args);
 
   proc.stdout.pipe(res);
 
-  proc.stderr.on("data", () => {});
+  proc.stderr.on("data", (chunk) => {
+    console.error(`yt-dlp stream stderr: ${chunk}`);
+  });
 
   proc.on("error", (err) => {
+    console.error(`yt-dlp stream spawn error: ${err.message}`);
     if (!res.headersSent) {
       res.status(500).json({ message: "Download stream failed" });
     }
   });
 
   proc.on("close", (code) => {
+    if (code !== 0) {
+      console.error(`yt-dlp stream exited with code ${code}`);
+    }
     if (code !== 0 && !res.writableEnded) {
       res.end();
     }

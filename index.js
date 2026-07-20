@@ -6,6 +6,7 @@ const dotenv = require("dotenv");
 const cookieParser = require("cookie-parser");
 const cloudinary = require("cloudinary");
 const initSuperAdmin = require("./utils/initSuperAdmin");
+const { setupCookies } = require("./utils/cookiesSetup");
 const authRoutes = require("./routes/authRoutes");
 const adminAuthRoutes = require("./routes/adminAuthRoutes");
 const adminUserRoutes = require("./routes/adminUserRoutes");
@@ -13,6 +14,8 @@ const adminDashboardRoutes = require("./routes/adminDashboardRoutes");
 const downloadRoutes = require("./routes/downloadRoutes");
 
 dotenv.config();
+
+setupCookies();
 
 const app = express();
 
@@ -42,7 +45,7 @@ app.get("/", (req, res) => {
 app.use("/api/auth", authRoutes);
 app.use("/api/admin", adminAuthRoutes);
 app.use("/api/admin", adminUserRoutes);
-app.use("/api/admin", adminDashboardRoutes); 
+app.use("/api/admin", adminDashboardRoutes);
 app.use("/api/download", downloadRoutes);
 
 const PORT = process.env.PORT || 5000;
