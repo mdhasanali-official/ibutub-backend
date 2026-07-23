@@ -119,29 +119,13 @@ exports.streamVideo = async (req, res) => {
         ext = match.ext;
       }
 
-      const upstream = await fetch(directUrl);
-      if (!upstream.ok || !upstream.body) {
-        console.error(
-          `Upstream fetch failed with status ${upstream.status} for ${directUrl}`,
-        );
-        return res.status(502).json({ message: "Failed to fetch file" });
-      }
-
-      res.setHeader(
-        "Content-Disposition",
-        `attachment; filename="${safeName}.${ext}"`,
-      );
-      res.setHeader("Content-Type", "application/octet-stream");
-
-      const { Readable } = require("stream");
-      Readable.fromWeb(upstream.body).pipe(res);
-
       DownloadHistory.findOneAndUpdate(
         { url },
         { status: "downloaded" },
         { sort: { createdAt: -1 } },
       ).catch(() => {});
-      return;
+
+      return res.redirect(302, directUrl);
     }
 
     res.setHeader(
