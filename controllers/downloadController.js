@@ -80,6 +80,7 @@ exports.extractVideo = async (req, res) => {
       data: info,
     });
   } catch (error) {
+    console.error(`extractVideo failed: ${error.message}`);
     return res.status(500).json({
       message: "Failed to extract video info",
       error: error.message,
@@ -118,9 +119,19 @@ exports.streamVideo = async (req, res) => {
         ext = match.ext;
       }
 
-      const upstream = await fetch(directUrl);
-      if (!upstream.ok || !upstream.body)
+      const upstream = await fetch(directUrl, {
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          Referer: "https://www.youtube.com/",
+        },
+      });
+      if (!upstream.ok || !upstream.body) {
+        console.error(
+          `Upstream fetch failed with status ${upstream.status} for ${directUrl}`,
+        );
         return res.status(502).json({ message: "Failed to fetch file" });
+      }
 
       res.setHeader(
         "Content-Disposition",
