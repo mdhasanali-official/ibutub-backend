@@ -15,9 +15,9 @@ const extractVideoId = (url) => {
 };
 
 const getYoutubeDetails = async (videoId) => {
-  const host = "all-media-downloader4.p.rapidapi.com";
+  const host = "youtube-media-downloader.p.rapidapi.com";
   const response = await fetch(
-    `https://${host}/api/youtube/download?id=${videoId}`,
+    `https://${host}/v2/video/details?videoId=${videoId}&urlAccess=normal&videos=auto&audios=auto`,
     {
       headers: {
         "x-rapidapi-host": host,
@@ -26,29 +26,41 @@ const getYoutubeDetails = async (videoId) => {
     },
   );
 
-  if (!response.ok)
-    throw new Error(`AllMediaDownloader status ${response.status}`);
-
+  if (!response.ok) throw new Error(`DataFanatic status ${response.status}`);
   const data = await response.json();
-  const results = data.results || [];
+  if (data.errorId !== "Success")
+    throw new Error(data.errorId || "DataFanatic error");
 
-  if (results.length === 0) throw new Error("No formats returned");
+  const videoItems = data.videos?.items || [];
+  const audioItems = data.audios?.items || [];
 
   return {
-    title: "YouTube Video",
-    thumbnail: null,
-    duration: data.duration || null,
-    uploader: null,
-    formats: results.map((item, idx) => ({
-      format_id: `amd-${idx}`,
-      ext: (item.mime || "video/mp4").split("/")[1] || "mp4",
-      resolution: item.quality || "video",
-      hasVideo: !item.mime?.startsWith("audio"),
-      hasAudio: !!item.has_audio,
-      filesize: null,
-      note: item.quality || "",
-      url: item.url,
-    })),
+    title: data.title || "Untitled",
+    thumbnail: data.thumbnails?.[data.thumbnails.length - 1]?.url || null,
+    duration: data.lengthSeconds || null,
+    uploader: data.channel?.name || null,
+    formats: [
+      ...videoItems.map((item, idx) => ({
+        format_id: `v-${idx}`,
+        ext: item.extension,
+        resolution: item.quality || "video",
+        hasVideo: true,
+        hasAudio: !!item.hasAudio,
+        filesize: item.size || null,
+        note: item.quality || "",
+        url: item.url,
+      })),
+      ...audioItems.map((item, idx) => ({
+        format_id: `a-${idx}`,
+        ext: item.extension,
+        resolution: "audio only",
+        hasVideo: false,
+        hasAudio: true,
+        filesize: item.size || null,
+        note: item.quality || item.extension,
+        url: item.url,
+      })),
+    ],
   };
 };
 
