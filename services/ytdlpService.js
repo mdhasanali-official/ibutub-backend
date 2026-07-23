@@ -137,6 +137,6 @@ const streamDownload = (url, formatId, res) => {
   });
 
   return proc;
-};
+}; 
 
 module.exports = { detectPlatform, extractInfo, streamDownload };
