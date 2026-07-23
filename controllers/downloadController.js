@@ -27,43 +27,6 @@ const sanitizeFilename = (name) => {
 const isYoutubeUrl = (url) =>
   url.includes("youtube.com") || url.includes("youtu.be");
 
-const mapRapidApiToInfo = (data) => {
-  const videoItems = data.videos?.items || [];
-  const audioItems = data.audios?.items || [];
-
-  const videoFormats = videoItems.map((item, idx) => ({
-    format_id: `v-${idx}`,
-    ext: item.extension,
-    resolution: item.quality || (item.height ? `${item.height}p` : "video"),
-    hasVideo: true,
-    hasAudio: !!item.hasAudio,
-    filesize: item.size || null,
-    note: item.quality || "",
-  }));
-
-  const audioFormats = audioItems.map((item, idx) => ({
-    format_id: `a-${idx}`,
-    ext: item.extension,
-    resolution: "audio only",
-    hasVideo: false,
-    hasAudio: true,
-    filesize: item.size || null,
-    note: item.quality || item.extension,
-  }));
-
-  const bestThumbnail =
-    data.thumbnails?.[data.thumbnails.length - 1]?.url || null;
-
-  return {
-    platform: "youtube",
-    title: data.title || "Untitled",
-    thumbnail: bestThumbnail,
-    duration: data.lengthSeconds || null,
-    uploader: data.channel?.name || null,
-    formats: [...videoFormats, ...audioFormats],
-  };
-};
-
 exports.extractVideo = async (req, res) => {
   try {
     const { url } = req.body;
@@ -82,7 +45,24 @@ exports.extractVideo = async (req, res) => {
         return res.status(400).json({ message: "Invalid YouTube URL" });
 
       const data = await getYoutubeDetails(videoId);
-      info = mapRapidApiToInfo(data);
+      info = {
+        platform: "youtube",
+        title: data.title,
+        thumbnail: data.thumbnail,
+        duration: data.duration,
+        uploader: data.uploader,
+        formats: data.formats,
+      };
+
+      req.app.locals.formatUrlCache =
+        req.app.locals.formatUrlCache || new Map();
+      data.formats.forEach((f) => {
+        req.app.locals.formatUrlCache.set(`${videoId}:${f.format_id}`, {
+          url: f.url,
+          ext: f.ext,
+          expiresAt: Date.now() + 1000 * 60 * 30,
+        });
+      });
     } else {
       info = await extractInfo(url);
     }
@@ -123,20 +103,25 @@ exports.streamVideo = async (req, res) => {
       if (!videoId)
         return res.status(400).json({ message: "Invalid YouTube URL" });
 
-      const data = await getYoutubeDetails(videoId);
-      const [type, idxStr] = format_id.split("-");
-      const idx = parseInt(idxStr, 10);
-      const items = type === "a" ? data.audios?.items : data.videos?.items;
-      const item = items?.[idx];
+      const cache = req.app.locals.formatUrlCache;
+      const cached = cache?.get(`${videoId}:${format_id}`);
 
-      if (!item || !item.url)
-        return res.status(404).json({ message: "Format not found" });
+      let directUrl = cached?.url;
+      let ext = cached?.ext || "mp4";
 
-      const upstream = await fetch(item.url);
+      if (!cached || cached.expiresAt < Date.now()) {
+        const data = await getYoutubeDetails(videoId);
+        const match = data.formats.find((f) => f.format_id === format_id);
+        if (!match)
+          return res.status(404).json({ message: "Format not found" });
+        directUrl = match.url;
+        ext = match.ext;
+      }
+
+      const upstream = await fetch(directUrl);
       if (!upstream.ok || !upstream.body)
         return res.status(502).json({ message: "Failed to fetch file" });
 
-      const ext = item.extension || "mp4";
       res.setHeader(
         "Content-Disposition",
         `attachment; filename="${safeName}.${ext}"`,
