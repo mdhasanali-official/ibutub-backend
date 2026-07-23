@@ -23,7 +23,18 @@ const withCookies = (args) => {
 
 const runYtdlpJson = (url) => {
   return new Promise((resolve, reject) => {
-    const args = withCookies(["-j", "--no-playlist", "--no-warnings", url]);
+    const platform = detectPlatform(url);
+    const extraArgs =
+      platform === "youtube"
+        ? ["--extractor-args", "youtube:player_client=android,web"]
+        : [];
+    const args = withCookies([
+      "-j",
+      "--no-playlist",
+      "--no-warnings",
+      ...extraArgs,
+      url,
+    ]);
     const proc = spawn(YTDLP_BIN, args);
 
     let stdout = "";
@@ -34,9 +45,9 @@ const runYtdlpJson = (url) => {
 
     proc.on("close", (code) => {
       if (code !== 0) {
-        console.error(`yt-dlp exited with code ${code}`);
-        console.error(`yt-dlp url: ${url}`);
-        console.error(`yt-dlp stderr: ${stderr}`);
+        console.error(`yt-dlp [${platform}] exited with code ${code}`);
+        console.error(`yt-dlp [${platform}] url: ${url}`);
+        console.error(`yt-dlp [${platform}] stderr: ${stderr}`);
         return reject(new Error(stderr || "yt-dlp extraction failed"));
       }
       try {
@@ -83,6 +94,11 @@ const extractInfo = async (url) => {
 };
 
 const streamDownload = (url, formatId, res) => {
+  const platform = detectPlatform(url);
+  const extraArgs =
+    platform === "youtube"
+      ? ["--extractor-args", "youtube:player_client=android,web"]
+      : [];
   const args = withCookies([
     "-f",
     `${formatId}+bestaudio/${formatId}`,
@@ -90,6 +106,7 @@ const streamDownload = (url, formatId, res) => {
     "mp4",
     "--no-playlist",
     "--no-warnings",
+    ...extraArgs,
     "-o",
     "-",
     url,
@@ -100,11 +117,11 @@ const streamDownload = (url, formatId, res) => {
   proc.stdout.pipe(res);
 
   proc.stderr.on("data", (chunk) => {
-    console.error(`yt-dlp stream stderr: ${chunk}`);
+    console.error(`yt-dlp [${platform}] stream stderr: ${chunk}`);
   });
 
   proc.on("error", (err) => {
-    console.error(`yt-dlp stream spawn error: ${err.message}`);
+    console.error(`yt-dlp [${platform}] stream spawn error: ${err.message}`);
     if (!res.headersSent) {
       res.status(500).json({ message: "Download stream failed" });
     }
@@ -112,7 +129,7 @@ const streamDownload = (url, formatId, res) => {
 
   proc.on("close", (code) => {
     if (code !== 0) {
-      console.error(`yt-dlp stream exited with code ${code}`);
+      console.error(`yt-dlp [${platform}] stream exited with code ${code}`);
     }
     if (code !== 0 && !res.writableEnded) {
       res.end();
