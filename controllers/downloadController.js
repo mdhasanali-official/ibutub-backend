@@ -9,6 +9,13 @@ const SUPPORTED_HOSTS = [
   "instagram.com",
   "facebook.com",
   "fb.watch",
+  "twitter.com",
+  "x.com",
+  "reddit.com",
+  "pinterest.com",
+  "pin.it",
+  "threads.net",
+  "linkedin.com",
 ];
 
 const sanitizeFilename = (name) => {

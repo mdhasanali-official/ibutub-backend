@@ -13,6 +13,12 @@ const detectPlatform = (url) => {
   if (url.includes("instagram.com")) return "instagram";
   if (url.includes("facebook.com") || url.includes("fb.watch"))
     return "facebook";
+  if (url.includes("twitter.com") || url.includes("x.com")) return "twitter";
+  if (url.includes("reddit.com")) return "reddit";
+  if (url.includes("pinterest.com") || url.includes("pin.it"))
+    return "pinterest";
+  if (url.includes("threads.net")) return "threads";
+  if (url.includes("linkedin.com")) return "linkedin";
   return "unknown";
 };
 
