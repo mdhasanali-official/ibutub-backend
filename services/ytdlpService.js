@@ -1,5 +1,8 @@
 //services/ytdlpService.js
 const { spawn } = require("child_process");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
 const { getCookiesPath } = require("../utils/cookiesSetup");
 
 const YTDLP_BIN = "yt-dlp";
@@ -120,12 +123,15 @@ const extractInfo = async (url) => {
   };
 };
 
-const streamDownload = (url, formatId, res) => {
+const streamDownload = (url, formatId, res, filename) => {
   const platform = detectPlatform(url);
   const extraArgs =
     platform === "youtube"
       ? ["--extractor-args", "youtube:player_client=android"]
       : [];
+  const tempId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const outputTemplate = path.join(os.tmpdir(), `${tempId}.%(ext)s`);
+
   const args = withCookies([
     "-f",
     `${formatId}+bestaudio/${formatId}`,
@@ -135,15 +141,15 @@ const streamDownload = (url, formatId, res) => {
     "--no-warnings",
     ...extraArgs,
     "-o",
-    "-",
+    outputTemplate,
     url,
   ]);
 
   const proc = spawn(YTDLP_BIN, args);
-
-  proc.stdout.pipe(res);
+  let stderr = "";
 
   proc.stderr.on("data", (chunk) => {
+    stderr += chunk;
     console.error(`yt-dlp [${platform}] stream stderr: ${chunk}`);
   });
 
@@ -157,10 +163,36 @@ const streamDownload = (url, formatId, res) => {
   proc.on("close", (code) => {
     if (code !== 0) {
       console.error(`yt-dlp [${platform}] stream exited with code ${code}`);
+      if (!res.headersSent) {
+        res.status(500).json({ message: "Download failed", error: stderr });
+      }
+      return;
     }
-    if (code !== 0 && !res.writableEnded) {
-      res.end();
+
+    const dir = os.tmpdir();
+    const matched = fs.readdirSync(dir).find((f) => f.startsWith(tempId));
+    const outputFile = matched ? path.join(dir, matched) : null;
+
+    if (!outputFile || !fs.existsSync(outputFile)) {
+      if (!res.headersSent) {
+        res.status(500).json({ message: "Downloaded file not found" });
+      }
+      return;
     }
+
+    const ext = path.extname(outputFile).replace(".", "") || "mp4";
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${filename}.${ext}"`,
+    );
+    res.setHeader("Content-Type", "application/octet-stream");
+
+    const readStream = fs.createReadStream(outputFile);
+    readStream.pipe(res);
+
+    const cleanup = () => fs.unlink(outputFile, () => {});
+    readStream.on("close", cleanup);
+    readStream.on("error", cleanup);
   });
 
   return proc;

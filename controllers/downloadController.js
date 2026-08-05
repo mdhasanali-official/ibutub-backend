@@ -64,13 +64,7 @@ exports.streamVideo = async (req, res) => {
 
     const safeName = sanitizeFilename(filename);
 
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="${safeName}.mp4"`,
-    );
-    res.setHeader("Content-Type", "application/octet-stream");
-
-    streamDownload(url, format_id, res);
+    streamDownload(url, format_id, res, safeName);
 
     DownloadHistory.findOneAndUpdate(
       { url },
