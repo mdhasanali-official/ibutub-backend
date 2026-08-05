@@ -1,9 +1,5 @@
 //controllers/downloadController.js
 const { extractInfo, streamDownload } = require("../services/ytdlpService");
-const {
-  extractVideoId,
-  getYoutubeDetails,
-} = require("../services/rapidApiService");
 const DownloadHistory = require("../models/DownloadHistory");
 
 const SUPPORTED_HOSTS = [
@@ -24,9 +20,6 @@ const sanitizeFilename = (name) => {
   return cleaned.slice(0, 80) || "video";
 };
 
-const isYoutubeUrl = (url) =>
-  url.includes("youtube.com") || url.includes("youtu.be");
-
 exports.extractVideo = async (req, res) => {
   try {
     const { url } = req.body;
@@ -37,35 +30,7 @@ exports.extractVideo = async (req, res) => {
     if (!isSupported)
       return res.status(400).json({ message: "Unsupported platform" });
 
-    let info;
-
-    if (isYoutubeUrl(url)) {
-      const videoId = extractVideoId(url);
-      if (!videoId)
-        return res.status(400).json({ message: "Invalid YouTube URL" });
-
-      const data = await getYoutubeDetails(videoId);
-      info = {
-        platform: "youtube",
-        title: data.title,
-        thumbnail: data.thumbnail,
-        duration: data.duration,
-        uploader: data.uploader,
-        formats: data.formats,
-      };
-
-      req.app.locals.formatUrlCache =
-        req.app.locals.formatUrlCache || new Map();
-      data.formats.forEach((f) => {
-        req.app.locals.formatUrlCache.set(`${videoId}:${f.format_id}`, {
-          url: f.url,
-          ext: f.ext,
-          expiresAt: Date.now() + 1000 * 60 * 30,
-        });
-      });
-    } else {
-      info = await extractInfo(url);
-    }
+    const info = await extractInfo(url);
 
     await DownloadHistory.create({
       url,
@@ -98,35 +63,6 @@ exports.streamVideo = async (req, res) => {
         .json({ message: "url and format_id are required" });
 
     const safeName = sanitizeFilename(filename);
-
-    if (isYoutubeUrl(url)) {
-      const videoId = extractVideoId(url);
-      if (!videoId)
-        return res.status(400).json({ message: "Invalid YouTube URL" });
-
-      const cache = req.app.locals.formatUrlCache;
-      const cached = cache?.get(`${videoId}:${format_id}`);
-
-      let directUrl = cached?.url;
-      let ext = cached?.ext || "mp4";
-
-      if (!cached || cached.expiresAt < Date.now()) {
-        const data = await getYoutubeDetails(videoId);
-        const match = data.formats.find((f) => f.format_id === format_id);
-        if (!match)
-          return res.status(404).json({ message: "Format not found" });
-        directUrl = match.url;
-        ext = match.ext;
-      }
-
-      DownloadHistory.findOneAndUpdate(
-        { url },
-        { status: "downloaded" },
-        { sort: { createdAt: -1 } },
-      ).catch(() => {});
-
-      return res.redirect(302, directUrl);
-    }
 
     res.setHeader(
       "Content-Disposition",
