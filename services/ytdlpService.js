@@ -26,7 +26,7 @@ const runYtdlpJson = (url) => {
     const platform = detectPlatform(url);
     const extraArgs =
       platform === "youtube"
-        ? ["--extractor-args", "youtube:player_client=android,web"]
+        ? ["--extractor-args", "youtube:player_client=web,web_safari"]
         : [];
     const args = withCookies([
       "-j",
@@ -97,7 +97,7 @@ const streamDownload = (url, formatId, res) => {
   const platform = detectPlatform(url);
   const extraArgs =
     platform === "youtube"
-      ? ["--extractor-args", "youtube:player_client=android,web"]
+      ? ["--extractor-args", "youtube:player_client=web,web_safari"]
       : [];
   const args = withCookies([
     "-f",
@@ -137,6 +137,6 @@ const streamDownload = (url, formatId, res) => {
   });
 
   return proc;
-}; 
+};
 
 module.exports = { detectPlatform, extractInfo, streamDownload };
