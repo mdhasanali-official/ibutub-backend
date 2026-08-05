@@ -67,21 +67,48 @@ const runYtdlpJson = (url) => {
   });
 };
 
+const fetchFilesize = async (url) => {
+  if (!url) return null;
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    const response = await fetch(url, {
+      method: "HEAD",
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    const length = response.headers.get("content-length");
+    return length ? parseInt(length, 10) : null;
+  } catch {
+    return null;
+  }
+};
+
 const extractInfo = async (url) => {
   const platform = detectPlatform(url);
   const raw = await runYtdlpJson(url);
 
-  const formats = (raw.formats || [])
-    .filter((f) => f.vcodec !== "none" || f.acodec !== "none")
-    .map((f) => ({
-      format_id: f.format_id,
-      ext: f.ext,
-      resolution: f.resolution || (f.height ? `${f.height}p` : "audio"),
-      hasVideo: f.vcodec !== "none",
-      hasAudio: f.acodec !== "none",
-      filesize: f.filesize || f.filesize_approx || null,
-      note: f.format_note || "",
-    }));
+  const rawFormats = (raw.formats || []).filter(
+    (f) => f.vcodec !== "none" || f.acodec !== "none",
+  );
+
+  const formats = await Promise.all(
+    rawFormats.map(async (f) => {
+      let filesize = f.filesize || f.filesize_approx || null;
+      if (!filesize) {
+        filesize = await fetchFilesize(f.url);
+      }
+      return {
+        format_id: f.format_id,
+        ext: f.ext,
+        resolution: f.resolution || (f.height ? `${f.height}p` : "audio"),
+        hasVideo: f.vcodec !== "none",
+        hasAudio: f.acodec !== "none",
+        filesize,
+        note: f.format_note || "",
+      };
+    }),
+  );
 
   return {
     platform,
