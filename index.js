@@ -15,7 +15,7 @@ const downloadRoutes = require("./routes/downloadRoutes");
 
 dotenv.config();
 
-setupCookies();
+setupCookies(); 
 
 const app = express();
 
@@ -50,5 +50,5 @@ app.use("/api/download", downloadRoutes);
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+  console.log(`Server on http://localhost:${PORT}`);
 });
