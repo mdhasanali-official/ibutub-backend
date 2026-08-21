@@ -62,7 +62,7 @@ exports.extractVideo = async (req, res) => {
 
 exports.streamVideo = async (req, res) => {
   try {
-    const { url, format_id, filename } = req.query;
+    const { url, format_id, filename, resolution } = req.query;
 
     if (!url || !format_id)
       return res
@@ -71,7 +71,7 @@ exports.streamVideo = async (req, res) => {
 
     const safeName = sanitizeFilename(filename);
 
-    streamDownload(url, format_id, res, safeName);
+    streamDownload(url, format_id, res, safeName, resolution);
 
     DownloadHistory.findOneAndUpdate(
       { url },

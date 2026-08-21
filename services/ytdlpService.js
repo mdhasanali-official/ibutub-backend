@@ -6,6 +6,8 @@ const path = require("path");
 const { getCookiesPath } = require("../utils/cookiesSetup");
 
 const YTDLP_BIN = "yt-dlp";
+const FILESIZE_LOOKUP_LIMIT = 6;
+const FILESIZE_TIMEOUT_MS = 2000;
 
 const detectPlatform = (url) => {
   if (url.includes("youtube.com") || url.includes("youtu.be")) return "youtube";
@@ -30,6 +32,37 @@ const withCookies = (args) => {
   return args;
 };
 
+const parseHeight = (resolution) => {
+  if (!resolution) return null;
+  const lower = String(resolution).toLowerCase();
+  if (lower.includes("audio")) return null;
+  const cross = lower.match(/\d+\s*x\s*(\d+)/);
+  if (cross) return parseInt(cross[1], 10);
+  const p = lower.match(/(\d+)p/);
+  if (p) return parseInt(p[1], 10);
+  const plain = lower.match(/(\d+)/);
+  if (plain) return parseInt(plain[1], 10);
+  return null;
+};
+
+const buildFormatSelector = (formatId, resolution, isAudioOnly) => {
+  if (isAudioOnly) {
+    return `${formatId}/bestaudio/best`;
+  }
+  const height = parseHeight(resolution);
+  if (height) {
+    return [
+      `${formatId}+bestaudio`,
+      `${formatId}`,
+      `bestvideo[height<=${height}]+bestaudio`,
+      `best[height<=${height}]`,
+      "bestvideo+bestaudio",
+      "best",
+    ].join("/");
+  }
+  return `${formatId}+bestaudio/${formatId}/bestvideo+bestaudio/best`;
+};
+
 const runYtdlpJson = (url) => {
   return new Promise((resolve, reject) => {
     const platform = detectPlatform(url);
@@ -41,6 +74,10 @@ const runYtdlpJson = (url) => {
       "-j",
       "--no-playlist",
       "--no-warnings",
+      "--no-check-certificates",
+      "--no-call-home",
+      "--socket-timeout",
+      "10",
       ...extraArgs,
       url,
     ]);
@@ -80,7 +117,7 @@ const fetchFilesize = async (url) => {
   if (!url) return null;
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
+    const timeout = setTimeout(() => controller.abort(), FILESIZE_TIMEOUT_MS);
     const response = await fetch(url, {
       method: "HEAD",
       signal: controller.signal,
@@ -101,23 +138,30 @@ const extractInfo = async (url) => {
     (f) => f.vcodec !== "none" || f.acodec !== "none",
   );
 
-  const formats = await Promise.all(
-    rawFormats.map(async (f) => {
-      let filesize = f.filesize || f.filesize_approx || null;
-      if (!filesize) {
-        filesize = await fetchFilesize(f.url);
-      }
-      return {
-        format_id: f.format_id,
-        ext: f.ext,
-        resolution: f.resolution || (f.height ? `${f.height}p` : "audio"),
-        hasVideo: f.vcodec !== "none",
-        hasAudio: f.acodec !== "none",
-        filesize,
-        note: f.format_note || "",
-      };
+  const formats = rawFormats.map((f) => ({
+    format_id: f.format_id,
+    ext: f.ext,
+    resolution: f.resolution || (f.height ? `${f.height}p` : "audio"),
+    hasVideo: f.vcodec !== "none",
+    hasAudio: f.acodec !== "none",
+    filesize: f.filesize || f.filesize_approx || null,
+    note: f.format_note || "",
+    _sourceUrl: f.url,
+  }));
+
+  const missing = formats
+    .map((f, index) => ({ f, index }))
+    .filter(({ f }) => !f.filesize && f._sourceUrl)
+    .slice(0, FILESIZE_LOOKUP_LIMIT);
+
+  await Promise.all(
+    missing.map(async ({ f, index }) => {
+      const size = await fetchFilesize(f._sourceUrl);
+      if (size) formats[index].filesize = size;
     }),
   );
+
+  const cleanFormats = formats.map(({ _sourceUrl, ...rest }) => rest);
 
   return {
     platform,
@@ -125,11 +169,11 @@ const extractInfo = async (url) => {
     thumbnail: raw.thumbnail || null,
     duration: raw.duration || null,
     uploader: raw.uploader || null,
-    formats,
+    formats: cleanFormats,
   };
 };
 
-const streamDownload = (url, formatId, res, filename) => {
+const streamDownload = (url, formatId, res, filename, resolution) => {
   const platform = detectPlatform(url);
   const extraArgs =
     platform === "youtube"
@@ -138,13 +182,24 @@ const streamDownload = (url, formatId, res, filename) => {
   const tempId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const outputTemplate = path.join(os.tmpdir(), `${tempId}.%(ext)s`);
 
+  const isAudioOnly =
+    String(resolution || "")
+      .toLowerCase()
+      .includes("audio") || String(formatId).startsWith("a-");
+
+  const formatSelector = buildFormatSelector(formatId, resolution, isAudioOnly);
+
   const args = withCookies([
     "-f",
-    `${formatId}+bestaudio/${formatId}`,
+    formatSelector,
     "--merge-output-format",
     "mp4",
     "--no-playlist",
     "--no-warnings",
+    "--no-check-certificates",
+    "--no-call-home",
+    "--concurrent-fragments",
+    "4",
     ...extraArgs,
     "-o",
     outputTemplate,
@@ -162,15 +217,19 @@ const streamDownload = (url, formatId, res, filename) => {
   proc.on("error", (err) => {
     console.error(`yt-dlp [${platform}] stream spawn error: ${err.message}`);
     if (!res.headersSent) {
-      res.status(500).json({ message: "Download stream failed" });
+      res.status(500).json({ message: "Download failed. Please try again." });
     }
   });
 
   proc.on("close", (code) => {
     if (code !== 0) {
       console.error(`yt-dlp [${platform}] stream exited with code ${code}`);
+      console.error(`yt-dlp [${platform}] selector used: ${formatSelector}`);
       if (!res.headersSent) {
-        res.status(500).json({ message: "Download failed", error: stderr });
+        res.status(500).json({
+          message:
+            "This quality is no longer available. Please paste the link again and pick another option.",
+        });
       }
       return;
     }
@@ -181,7 +240,7 @@ const streamDownload = (url, formatId, res, filename) => {
 
     if (!outputFile || !fs.existsSync(outputFile)) {
       if (!res.headersSent) {
-        res.status(500).json({ message: "Downloaded file not found" });
+        res.status(500).json({ message: "Download failed. Please try again." });
       }
       return;
     }
