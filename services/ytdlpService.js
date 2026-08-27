@@ -11,6 +11,16 @@ const FILESIZE_TIMEOUT_MS = 2000;
 
 const YOUTUBE_CLIENTS = ["android", "ios", "web", "tv"];
 
+const getProxyUrl = () => {
+  const host = process.env.PROXY_HOST;
+  const port = process.env.PROXY_PORT;
+  const username = process.env.PROXY_USERNAME;
+  const password = process.env.PROXY_PASSWORD;
+
+  if (!host || !port || !username || !password) return null;
+  return `http://${username}:${password}@${host}:${port}`;
+};
+
 const detectPlatform = (url) => {
   if (url.includes("youtube.com") || url.includes("youtu.be")) return "youtube";
   if (url.includes("tiktok.com")) return "tiktok";
@@ -30,6 +40,14 @@ const withCookies = (args) => {
   const cookiesPath = getCookiesPath();
   if (cookiesPath) {
     return ["--cookies", cookiesPath, ...args];
+  }
+  return args;
+};
+
+const withProxy = (args) => {
+  const proxyUrl = getProxyUrl();
+  if (proxyUrl) {
+    return ["--proxy", proxyUrl, ...args];
   }
   return args;
 };
@@ -91,14 +109,16 @@ const runYtdlpProcess = (args) => {
 
 const runYtdlpJson = async (url) => {
   const platform = detectPlatform(url);
-  const baseArgs = withCookies([
-    "-j",
-    "--no-playlist",
-    "--no-warnings",
-    "--no-check-certificates",
-    "--socket-timeout",
-    "10",
-  ]);
+  const baseArgs = withProxy(
+    withCookies([
+      "-j",
+      "--no-playlist",
+      "--no-warnings",
+      "--no-check-certificates",
+      "--socket-timeout",
+      "10",
+    ]),
+  );
 
   if (platform !== "youtube") {
     try {
@@ -188,21 +208,23 @@ const extractInfo = async (url) => {
 };
 
 const runStreamProcess = (url, formatSelector, outputTemplate, extraArgs) => {
-  const args = withCookies([
-    "-f",
-    formatSelector,
-    "--merge-output-format",
-    "mp4",
-    "--no-playlist",
-    "--no-warnings",
-    "--no-check-certificates",
-    "--concurrent-fragments",
-    "4",
-    ...extraArgs,
-    "-o",
-    outputTemplate,
-    url,
-  ]);
+  const args = withProxy(
+    withCookies([
+      "-f",
+      formatSelector,
+      "--merge-output-format",
+      "mp4",
+      "--no-playlist",
+      "--no-warnings",
+      "--no-check-certificates",
+      "--concurrent-fragments",
+      "4",
+      ...extraArgs,
+      "-o",
+      outputTemplate,
+      url,
+    ]),
+  );
 
   return spawn(YTDLP_BIN, args);
 };
