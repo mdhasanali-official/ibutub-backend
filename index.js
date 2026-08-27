@@ -49,6 +49,14 @@ app.get("/", (req, res) => {
   res.send("MERN Backend Running Successfully!");
 });
 
+app.get("/api/health", (req, res) => {
+  res.status(200).json({
+    status: "ok",
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+  });
+});
+
 app.get("/sitemap.xml", getSitemapXml);
 app.get("/robots.txt", getRobotsTxt);
 
