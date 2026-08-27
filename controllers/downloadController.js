@@ -71,13 +71,13 @@ exports.streamVideo = async (req, res) => {
 
     const safeName = sanitizeFilename(filename);
 
-    streamDownload(url, format_id, res, safeName, resolution);
-
-    DownloadHistory.findOneAndUpdate(
-      { url },
-      { status: "downloaded" },
-      { sort: { createdAt: -1 } },
-    ).catch(() => {});
+    streamDownload(url, format_id, res, safeName, resolution, (success) => {
+      DownloadHistory.findOneAndUpdate(
+        { url },
+        { status: success ? "downloaded" : "failed" },
+        { sort: { createdAt: -1 } },
+      ).catch(() => {});
+    });
   } catch (error) {
     return res.status(500).json({
       message: "Failed to stream video",

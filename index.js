@@ -11,7 +11,9 @@ const authRoutes = require("./routes/authRoutes");
 const adminAuthRoutes = require("./routes/adminAuthRoutes");
 const adminUserRoutes = require("./routes/adminUserRoutes");
 const adminDashboardRoutes = require("./routes/adminDashboardRoutes");
+const adminDownloadRoutes = require("./routes/adminDownloadRoutes");
 const downloadRoutes = require("./routes/downloadRoutes");
+const trackRoutes = require("./routes/trackRoutes");
 const {
   settingsRouter,
   getSitemapXml,
@@ -54,7 +56,9 @@ app.use("/api/auth", authRoutes);
 app.use("/api/admin", adminAuthRoutes);
 app.use("/api/admin", adminUserRoutes);
 app.use("/api/admin", adminDashboardRoutes);
+app.use("/api/admin", adminDownloadRoutes);
 app.use("/api/download", downloadRoutes);
+app.use("/api/track", trackRoutes);
 app.use("/api", settingsRouter);
 
 const PORT = process.env.PORT || 5000;

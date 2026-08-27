@@ -30,6 +30,36 @@ const siteSettingsSchema = new mongoose.Schema(
       youtube: { type: String, default: "" },
     },
 
+    seo: {
+      metaTitle: {
+        type: String,
+        default: "ibutub — ফ্রি ভিডিও ডাউনলোডার (YouTube, Facebook, TikTok)",
+      },
+      metaDescription: {
+        type: String,
+        default:
+          "ibutub দিয়ে যেকোনো ভিডিও ফ্রিতে ও দ্রুত ডাউনলোড করুন — কোনো সফটওয়্যার ছাড়াই, HD কোয়ালিটিতে।",
+      },
+      metaKeywords: {
+        type: String,
+        default:
+          "video downloader, youtube downloader, tiktok downloader, facebook video downloader, instagram downloader, ibutub",
+      },
+      metaRobots: { type: String, default: "index, follow" },
+      socialTitle: {
+        type: String,
+        default: "ibutub — Free Video Downloader (YouTube, Facebook, TikTok)",
+      },
+      socialDescription: {
+        type: String,
+        default:
+          "Download videos from YouTube, TikTok, Instagram and Facebook in HD, free and fast — no account needed.",
+      },
+      gscVerificationCode: { type: String, default: "" },
+      gaMeasurementId: { type: String, default: "" },
+      gaEnabled: { type: Boolean, default: false },
+    },
+
     siteUrl: { type: String, default: "https://ibutbu.com" },
 
     robotsTxt: {

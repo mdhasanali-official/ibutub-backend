@@ -15,6 +15,7 @@ exports.getPublicSettings = async (req, res) => {
         maintenance: s.maintenance,
         branding: s.branding,
         social: s.social,
+        seo: s.seo,
       },
     });
   } catch {
@@ -33,14 +34,22 @@ exports.getAdminSettings = async (req, res) => {
 
 exports.updateSettings = async (req, res) => {
   try {
-    const { banner, maintenance, social, robotsTxt, siteUrl, sitemapPages } =
-      req.body;
+    const {
+      banner,
+      maintenance,
+      social,
+      seo,
+      robotsTxt,
+      siteUrl,
+      sitemapPages,
+    } = req.body;
     const s = await SiteSettings.getSettings();
 
     if (banner) s.banner = { ...s.banner.toObject(), ...banner };
     if (maintenance)
       s.maintenance = { ...s.maintenance.toObject(), ...maintenance };
     if (social) s.social = { ...s.social.toObject(), ...social };
+    if (seo) s.seo = { ...s.seo.toObject(), ...seo };
     if (typeof robotsTxt === "string") s.robotsTxt = robotsTxt;
     if (siteUrl) s.siteUrl = siteUrl;
     if (Array.isArray(sitemapPages)) s.sitemapPages = sitemapPages;

@@ -14,6 +14,8 @@ RUN npm install --production
 
 COPY . .
 
+RUN chmod +x entrypoint.sh
+
 EXPOSE 5000
 
-CMD ["node", "index.js"]
+CMD ["./entrypoint.sh"]

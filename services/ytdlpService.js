@@ -9,6 +9,8 @@ const YTDLP_BIN = "yt-dlp";
 const FILESIZE_LOOKUP_LIMIT = 6;
 const FILESIZE_TIMEOUT_MS = 2000;
 
+const YOUTUBE_CLIENTS = ["android", "ios", "web", "tv"];
+
 const detectPlatform = (url) => {
   if (url.includes("youtube.com") || url.includes("youtu.be")) return "youtube";
   if (url.includes("tiktok.com")) return "tiktok";
@@ -63,26 +65,9 @@ const buildFormatSelector = (formatId, resolution, isAudioOnly) => {
   return `${formatId}+bestaudio/${formatId}/bestvideo+bestaudio/best`;
 };
 
-const runYtdlpJson = (url) => {
+const runYtdlpProcess = (args) => {
   return new Promise((resolve, reject) => {
-    const platform = detectPlatform(url);
-    const extraArgs =
-      platform === "youtube"
-        ? ["--extractor-args", "youtube:player_client=android"]
-        : [];
-    const args = withCookies([
-      "-j",
-      "--no-playlist",
-      "--no-warnings",
-      "--no-check-certificates",
-      "--no-call-home",
-      "--socket-timeout",
-      "10",
-      ...extraArgs,
-      url,
-    ]);
     const proc = spawn(YTDLP_BIN, args);
-
     let stdout = "";
     let stderr = "";
 
@@ -91,26 +76,56 @@ const runYtdlpJson = (url) => {
 
     proc.on("close", (code) => {
       if (code !== 0) {
-        console.error(`yt-dlp [${platform}] exited with code ${code}`);
-        console.error(`yt-dlp [${platform}] url: ${url}`);
-        console.error(`yt-dlp [${platform}] stderr: ${stderr}`);
         return reject(new Error(stderr || "yt-dlp extraction failed"));
       }
       try {
-        const data = JSON.parse(stdout);
-        resolve(data);
+        resolve(JSON.parse(stdout));
       } catch (err) {
-        console.error(`yt-dlp JSON parse failed: ${err.message}`);
-        console.error(`yt-dlp raw stdout: ${stdout.slice(0, 500)}`);
         reject(new Error("Failed to parse yt-dlp output"));
       }
     });
 
-    proc.on("error", (err) => {
-      console.error(`yt-dlp spawn error: ${err.message}`);
-      reject(err);
-    });
+    proc.on("error", (err) => reject(err));
   });
+};
+
+const runYtdlpJson = async (url) => {
+  const platform = detectPlatform(url);
+  const baseArgs = withCookies([
+    "-j",
+    "--no-playlist",
+    "--no-warnings",
+    "--no-check-certificates",
+    "--no-call-home",
+    "--socket-timeout",
+    "10",
+  ]);
+
+  if (platform !== "youtube") {
+    try {
+      return await runYtdlpProcess([...baseArgs, url]);
+    } catch (err) {
+      console.error(`yt-dlp [${platform}] failed: ${err.message}`);
+      throw err;
+    }
+  }
+
+  let lastError = null;
+  for (const client of YOUTUBE_CLIENTS) {
+    try {
+      const args = [
+        ...baseArgs,
+        "--extractor-args",
+        `youtube:player_client=${client}`,
+        url,
+      ];
+      return await runYtdlpProcess(args);
+    } catch (err) {
+      lastError = err;
+      console.error(`yt-dlp [youtube:${client}] failed: ${err.message}`);
+    }
+  }
+  throw lastError || new Error("yt-dlp extraction failed");
 };
 
 const fetchFilesize = async (url) => {
@@ -173,22 +188,7 @@ const extractInfo = async (url) => {
   };
 };
 
-const streamDownload = (url, formatId, res, filename, resolution) => {
-  const platform = detectPlatform(url);
-  const extraArgs =
-    platform === "youtube"
-      ? ["--extractor-args", "youtube:player_client=android"]
-      : [];
-  const tempId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  const outputTemplate = path.join(os.tmpdir(), `${tempId}.%(ext)s`);
-
-  const isAudioOnly =
-    String(resolution || "")
-      .toLowerCase()
-      .includes("audio") || String(formatId).startsWith("a-");
-
-  const formatSelector = buildFormatSelector(formatId, resolution, isAudioOnly);
-
+const runStreamProcess = (url, formatSelector, outputTemplate, extraArgs) => {
   const args = withCookies([
     "-f",
     formatSelector,
@@ -206,61 +206,107 @@ const streamDownload = (url, formatId, res, filename, resolution) => {
     url,
   ]);
 
-  const proc = spawn(YTDLP_BIN, args);
-  let stderr = "";
+  return spawn(YTDLP_BIN, args);
+};
 
-  proc.stderr.on("data", (chunk) => {
-    stderr += chunk;
-    console.error(`yt-dlp [${platform}] stream stderr: ${chunk}`);
-  });
+const streamDownload = (url, formatId, res, filename, resolution, onFinish) => {
+  const platform = detectPlatform(url);
+  const tempId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const outputTemplate = path.join(os.tmpdir(), `${tempId}.%(ext)s`);
 
-  proc.on("error", (err) => {
-    console.error(`yt-dlp [${platform}] stream spawn error: ${err.message}`);
-    if (!res.headersSent) {
-      res.status(500).json({ message: "Download failed. Please try again." });
-    }
-  });
+  const isAudioOnly =
+    String(resolution || "")
+      .toLowerCase()
+      .includes("audio") || String(formatId).startsWith("a-");
 
-  proc.on("close", (code) => {
-    if (code !== 0) {
-      console.error(`yt-dlp [${platform}] stream exited with code ${code}`);
-      console.error(`yt-dlp [${platform}] selector used: ${formatSelector}`);
-      if (!res.headersSent) {
-        res.status(500).json({
-          message:
-            "This quality is no longer available. Please paste the link again and pick another option.",
-        });
-      }
-      return;
-    }
+  const formatSelector = buildFormatSelector(formatId, resolution, isAudioOnly);
 
-    const dir = os.tmpdir();
-    const matched = fs.readdirSync(dir).find((f) => f.startsWith(tempId));
-    const outputFile = matched ? path.join(dir, matched) : null;
+  const clientQueue = platform === "youtube" ? [...YOUTUBE_CLIENTS] : [null];
 
-    if (!outputFile || !fs.existsSync(outputFile)) {
+  let finished = false;
+  const notifyFinish = (success) => {
+    if (finished) return;
+    finished = true;
+    if (onFinish) onFinish(success);
+  };
+
+  const tryClient = () => {
+    const client = clientQueue.shift();
+    const extraArgs =
+      client !== undefined && client !== null
+        ? ["--extractor-args", `youtube:player_client=${client}`]
+        : [];
+
+    const proc = runStreamProcess(
+      url,
+      formatSelector,
+      outputTemplate,
+      extraArgs,
+    );
+    let stderr = "";
+
+    proc.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+
+    proc.on("error", (err) => {
+      console.error(`yt-dlp [${platform}] stream spawn error: ${err.message}`);
+      if (clientQueue.length > 0) return tryClient();
+      notifyFinish(false);
       if (!res.headersSent) {
         res.status(500).json({ message: "Download failed. Please try again." });
       }
-      return;
-    }
+    });
 
-    const ext = path.extname(outputFile).replace(".", "") || "mp4";
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="${filename}.${ext}"`,
-    );
-    res.setHeader("Content-Type", "application/octet-stream");
+    proc.on("close", (code) => {
+      if (code !== 0) {
+        console.error(`yt-dlp [${platform}] stream exited with code ${code}`);
+        console.error(`yt-dlp [${platform}] stderr: ${stderr}`);
+        if (clientQueue.length > 0) return tryClient();
+        notifyFinish(false);
+        if (!res.headersSent) {
+          res.status(500).json({
+            message:
+              "This quality is no longer available. Please paste the link again and pick another option.",
+          });
+        }
+        return;
+      }
 
-    const readStream = fs.createReadStream(outputFile);
-    readStream.pipe(res);
+      const dir = os.tmpdir();
+      const matched = fs.readdirSync(dir).find((f) => f.startsWith(tempId));
+      const outputFile = matched ? path.join(dir, matched) : null;
 
-    const cleanup = () => fs.unlink(outputFile, () => {});
-    readStream.on("close", cleanup);
-    readStream.on("error", cleanup);
-  });
+      if (!outputFile || !fs.existsSync(outputFile)) {
+        if (clientQueue.length > 0) return tryClient();
+        notifyFinish(false);
+        if (!res.headersSent) {
+          res
+            .status(500)
+            .json({ message: "Download failed. Please try again." });
+        }
+        return;
+      }
 
-  return proc;
+      notifyFinish(true);
+
+      const ext = path.extname(outputFile).replace(".", "") || "mp4";
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${filename}.${ext}"`,
+      );
+      res.setHeader("Content-Type", "application/octet-stream");
+
+      const readStream = fs.createReadStream(outputFile);
+      readStream.pipe(res);
+
+      const cleanup = () => fs.unlink(outputFile, () => {});
+      readStream.on("close", cleanup);
+      readStream.on("error", cleanup);
+    });
+  };
+
+  tryClient();
 };
 
 module.exports = { detectPlatform, extractInfo, streamDownload };
