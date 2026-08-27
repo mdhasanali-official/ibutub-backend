@@ -96,7 +96,6 @@ const runYtdlpJson = async (url) => {
     "--no-playlist",
     "--no-warnings",
     "--no-check-certificates",
-    "--no-call-home",
     "--socket-timeout",
     "10",
   ]);
@@ -197,7 +196,6 @@ const runStreamProcess = (url, formatSelector, outputTemplate, extraArgs) => {
     "--no-playlist",
     "--no-warnings",
     "--no-check-certificates",
-    "--no-call-home",
     "--concurrent-fragments",
     "4",
     ...extraArgs,
