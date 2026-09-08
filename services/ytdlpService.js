@@ -207,24 +207,32 @@ const extractInfo = async (url) => {
   };
 };
 
-const runStreamProcess = (url, formatSelector, outputTemplate, extraArgs) => {
-  const args = withProxy(
-    withCookies([
-      "-f",
-      formatSelector,
-      "--merge-output-format",
-      "mp4",
-      "--no-playlist",
-      "--no-warnings",
-      "--no-check-certificates",
-      "--concurrent-fragments",
-      "4",
-      ...extraArgs,
-      "-o",
-      outputTemplate,
-      url,
-    ]),
-  );
+const runStreamProcess = (
+  url,
+  formatSelector,
+  outputTemplate,
+  extraArgs,
+  useProxy,
+) => {
+  const baseArgs = [
+    "-f",
+    formatSelector,
+    "--merge-output-format",
+    "mp4",
+    "--no-playlist",
+    "--no-warnings",
+    "--no-check-certificates",
+    "--concurrent-fragments",
+    "4",
+    ...extraArgs,
+    "-o",
+    outputTemplate,
+    url,
+  ];
+
+  const args = useProxy
+    ? withProxy(withCookies(baseArgs))
+    : withCookies(baseArgs);
 
   return spawn(YTDLP_BIN, args);
 };
@@ -244,14 +252,15 @@ const streamDownload = (url, formatId, res, filename, resolution, onFinish) => {
   const clientQueue = platform === "youtube" ? [...YOUTUBE_CLIENTS] : [null];
 
   let finished = false;
+  let usedProxyFallback = false;
   const notifyFinish = (success) => {
     if (finished) return;
     finished = true;
     if (onFinish) onFinish(success);
   };
 
-  const tryClient = () => {
-    const client = clientQueue.shift();
+  const tryClient = (useProxy) => {
+    const client = clientQueue.length > 0 ? clientQueue[0] : null;
     const extraArgs =
       client !== undefined && client !== null
         ? ["--extractor-args", `youtube:player_client=${client}`]
@@ -262,6 +271,7 @@ const streamDownload = (url, formatId, res, filename, resolution, onFinish) => {
       formatSelector,
       outputTemplate,
       extraArgs,
+      useProxy,
     );
     let stderr = "";
 
@@ -271,26 +281,30 @@ const streamDownload = (url, formatId, res, filename, resolution, onFinish) => {
 
     proc.on("error", (err) => {
       console.error(`yt-dlp [${platform}] stream spawn error: ${err.message}`);
-      if (clientQueue.length > 0) return tryClient();
+      handleFailure();
+    });
+
+    const handleFailure = () => {
+      if (!usedProxyFallback && getProxyUrl()) {
+        usedProxyFallback = true;
+        return tryClient(true);
+      }
+      if (clientQueue.length > 1) {
+        clientQueue.shift();
+        usedProxyFallback = false;
+        return tryClient(false);
+      }
       notifyFinish(false);
       if (!res.headersSent) {
         res.status(500).json({ message: "Download failed. Please try again." });
       }
-    });
+    };
 
     proc.on("close", (code) => {
       if (code !== 0) {
         console.error(`yt-dlp [${platform}] stream exited with code ${code}`);
         console.error(`yt-dlp [${platform}] stderr: ${stderr}`);
-        if (clientQueue.length > 0) return tryClient();
-        notifyFinish(false);
-        if (!res.headersSent) {
-          res.status(500).json({
-            message:
-              "This quality is no longer available. Please paste the link again and pick another option.",
-          });
-        }
-        return;
+        return handleFailure();
       }
 
       const dir = os.tmpdir();
@@ -298,14 +312,7 @@ const streamDownload = (url, formatId, res, filename, resolution, onFinish) => {
       const outputFile = matched ? path.join(dir, matched) : null;
 
       if (!outputFile || !fs.existsSync(outputFile)) {
-        if (clientQueue.length > 0) return tryClient();
-        notifyFinish(false);
-        if (!res.headersSent) {
-          res
-            .status(500)
-            .json({ message: "Download failed. Please try again." });
-        }
-        return;
+        return handleFailure();
       }
 
       notifyFinish(true);
@@ -326,7 +333,7 @@ const streamDownload = (url, formatId, res, filename, resolution, onFinish) => {
     });
   };
 
-  tryClient();
+  tryClient(false);
 };
 
 module.exports = { detectPlatform, extractInfo, streamDownload };
