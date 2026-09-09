@@ -1,4 +1,4 @@
-//services/ytdlpService.js
+// services/ytdlpService.js
 const { spawn } = require("child_process");
 const fs = require("fs");
 const os = require("os");
@@ -25,12 +25,10 @@ const detectPlatform = (url) => {
   if (url.includes("youtube.com") || url.includes("youtu.be")) return "youtube";
   if (url.includes("tiktok.com")) return "tiktok";
   if (url.includes("instagram.com")) return "instagram";
-  if (url.includes("facebook.com") || url.includes("fb.watch"))
-    return "facebook";
+  if (url.includes("facebook.com") || url.includes("fb.watch")) return "facebook";
   if (url.includes("twitter.com") || url.includes("x.com")) return "twitter";
   if (url.includes("reddit.com")) return "reddit";
-  if (url.includes("pinterest.com") || url.includes("pin.it"))
-    return "pinterest";
+  if (url.includes("pinterest.com") || url.includes("pin.it")) return "pinterest";
   if (url.includes("threads.net")) return "threads";
   if (url.includes("linkedin.com")) return "linkedin";
   return "unknown";
@@ -212,7 +210,6 @@ const runStreamProcess = (
   formatSelector,
   outputTemplate,
   extraArgs,
-  useProxy,
 ) => {
   const baseArgs = [
     "-f",
@@ -230,11 +227,7 @@ const runStreamProcess = (
     url,
   ];
 
-  const args = useProxy
-    ? withProxy(withCookies(baseArgs))
-    : withCookies(baseArgs);
-
-  return spawn(YTDLP_BIN, args);
+  return spawn(YTDLP_BIN, withCookies(baseArgs));
 };
 
 const streamDownload = (url, formatId, res, filename, resolution, onFinish) => {
@@ -248,18 +241,16 @@ const streamDownload = (url, formatId, res, filename, resolution, onFinish) => {
       .includes("audio") || String(formatId).startsWith("a-");
 
   const formatSelector = buildFormatSelector(formatId, resolution, isAudioOnly);
-
   const clientQueue = platform === "youtube" ? [...YOUTUBE_CLIENTS] : [null];
 
   let finished = false;
-  let usedProxyFallback = false;
   const notifyFinish = (success) => {
     if (finished) return;
     finished = true;
     if (onFinish) onFinish(success);
   };
 
-  const tryClient = (useProxy) => {
+  const tryClient = () => {
     const client = clientQueue.length > 0 ? clientQueue[0] : null;
     const extraArgs =
       client !== undefined && client !== null
@@ -271,7 +262,6 @@ const streamDownload = (url, formatId, res, filename, resolution, onFinish) => {
       formatSelector,
       outputTemplate,
       extraArgs,
-      useProxy,
     );
     let stderr = "";
 
@@ -285,14 +275,9 @@ const streamDownload = (url, formatId, res, filename, resolution, onFinish) => {
     });
 
     const handleFailure = () => {
-      if (!usedProxyFallback && getProxyUrl()) {
-        usedProxyFallback = true;
-        return tryClient(true);
-      }
       if (clientQueue.length > 1) {
         clientQueue.shift();
-        usedProxyFallback = false;
-        return tryClient(false);
+        return tryClient();
       }
       notifyFinish(false);
       if (!res.headersSent) {
@@ -333,7 +318,7 @@ const streamDownload = (url, formatId, res, filename, resolution, onFinish) => {
     });
   };
 
-  tryClient(false);
+  tryClient();
 };
 
 module.exports = { detectPlatform, extractInfo, streamDownload };
