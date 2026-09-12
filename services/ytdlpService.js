@@ -739,9 +739,6 @@ const runYtdlpJsonWithFormat = async (url, formatSelector) => {
       const requestedCount = Array.isArray(result.requested_formats)
         ? result.requested_formats.length
         : 0;
-      console.error(
-        `runYtdlpJsonWithFormat debug: client=${client} requestedFormatsCount=${requestedCount} resolved_format_id=${result.format_id} resolved_height=${result.height}`,
-      );
       if (requestedCount === 2) {
         return result;
       }
@@ -754,26 +751,7 @@ const runYtdlpJsonWithFormat = async (url, formatSelector) => {
     }
   }
 
-  const baseArgsFallback = withProxy(
-    withCookies([
-      "-f",
-      formatSelector,
-      "-j",
-      "--no-playlist",
-      "--no-warnings",
-      "--no-check-certificates",
-      "--socket-timeout",
-      "10",
-      "--extractor-args",
-      "youtube:player_client=web",
-    ]),
-  );
-
-  try {
-    return await runYtdlpProcess([...baseArgsFallback, url]);
-  } catch (err) {
-    throw lastError || err;
-  }
+  throw lastError || new Error("yt-dlp format resolution failed");
 };
 
 const fetchFilesize = async (url) => {
