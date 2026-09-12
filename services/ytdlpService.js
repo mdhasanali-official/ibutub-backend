@@ -1,15 +1,20 @@
 // services/ytdlpService.js
 const { spawn } = require("child_process");
+const https = require("https");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { getCookiesPath } = require("../utils/cookiesSetup");
+const { setFormats, getFormats } = require("./formatCache");
 
 const YTDLP_BIN = "yt-dlp";
 const FILESIZE_LOOKUP_LIMIT = 6;
 const FILESIZE_TIMEOUT_MS = 2000;
 
 const YOUTUBE_CLIENTS = ["android", "ios", "web", "tv"];
+
+const USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
 const getProxyUrl = () => {
   const host = process.env.PROXY_HOST;
@@ -25,10 +30,12 @@ const detectPlatform = (url) => {
   if (url.includes("youtube.com") || url.includes("youtu.be")) return "youtube";
   if (url.includes("tiktok.com")) return "tiktok";
   if (url.includes("instagram.com")) return "instagram";
-  if (url.includes("facebook.com") || url.includes("fb.watch")) return "facebook";
+  if (url.includes("facebook.com") || url.includes("fb.watch"))
+    return "facebook";
   if (url.includes("twitter.com") || url.includes("x.com")) return "twitter";
   if (url.includes("reddit.com")) return "reddit";
-  if (url.includes("pinterest.com") || url.includes("pin.it")) return "pinterest";
+  if (url.includes("pinterest.com") || url.includes("pin.it"))
+    return "pinterest";
   if (url.includes("threads.net")) return "threads";
   if (url.includes("linkedin.com")) return "linkedin";
   return "unknown";
@@ -178,6 +185,7 @@ const extractInfo = async (url) => {
     hasAudio: f.acodec !== "none",
     filesize: f.filesize || f.filesize_approx || null,
     note: f.format_note || "",
+    abr: f.abr || 0,
     _sourceUrl: f.url,
   }));
 
@@ -193,7 +201,21 @@ const extractInfo = async (url) => {
     }),
   );
 
-  const cleanFormats = formats.map(({ _sourceUrl, ...rest }) => rest);
+  if (platform === "youtube") {
+    setFormats(
+      url,
+      formats.map((f) => ({
+        format_id: f.format_id,
+        ext: f.ext,
+        hasVideo: f.hasVideo,
+        hasAudio: f.hasAudio,
+        abr: f.abr,
+        sourceUrl: f._sourceUrl,
+      })),
+    );
+  }
+
+  const cleanFormats = formats.map(({ _sourceUrl, abr, ...rest }) => rest);
 
   return {
     platform,
@@ -205,12 +227,163 @@ const extractInfo = async (url) => {
   };
 };
 
-const runStreamProcess = (
+const resolveYoutubeDirectUrls = async (url, formatId, isAudioOnly) => {
+  let formats = getFormats(url);
+
+  if (!formats) {
+    const raw = await runYtdlpJson(url);
+    formats = (raw.formats || [])
+      .filter((f) => f.vcodec !== "none" || f.acodec !== "none")
+      .map((f) => ({
+        format_id: f.format_id,
+        ext: f.ext,
+        hasVideo: f.vcodec !== "none",
+        hasAudio: f.acodec !== "none",
+        abr: f.abr || 0,
+        sourceUrl: f.url,
+      }));
+    setFormats(url, formats);
+  }
+
+  const chosen = formats.find((f) => f.format_id === formatId);
+  if (!chosen || !chosen.sourceUrl) return null;
+
+  if (isAudioOnly || (chosen.hasAudio && chosen.hasVideo)) {
+    return { type: "single", url: chosen.sourceUrl, ext: chosen.ext || "mp4" };
+  }
+
+  const bestAudio = formats
+    .filter((f) => f.hasAudio && !f.hasVideo && f.sourceUrl)
+    .sort((a, b) => (b.abr || 0) - (a.abr || 0))[0];
+
+  if (!bestAudio) {
+    return { type: "single", url: chosen.sourceUrl, ext: chosen.ext || "mp4" };
+  }
+
+  return {
+    type: "merge",
+    videoUrl: chosen.sourceUrl,
+    audioUrl: bestAudio.sourceUrl,
+  };
+};
+
+const fetchToResponse = (
   url,
-  formatSelector,
-  outputTemplate,
-  extraArgs,
+  res,
+  filename,
+  ext,
+  onFinish,
+  redirectsLeft = 5,
 ) => {
+  https
+    .get(url, { headers: { "User-Agent": USER_AGENT } }, (upstream) => {
+      if (
+        [301, 302, 303, 307, 308].includes(upstream.statusCode) &&
+        upstream.headers.location &&
+        redirectsLeft > 0
+      ) {
+        upstream.resume();
+        fetchToResponse(
+          upstream.headers.location,
+          res,
+          filename,
+          ext,
+          onFinish,
+          redirectsLeft - 1,
+        );
+        return;
+      }
+
+      if (upstream.statusCode !== 200 && upstream.statusCode !== 206) {
+        onFinish(false);
+        if (!res.headersSent) {
+          res
+            .status(500)
+            .json({ message: "Download failed. Please try again." });
+        }
+        return;
+      }
+
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${filename}.${ext}"`,
+      );
+      res.setHeader("Content-Type", "application/octet-stream");
+
+      upstream.pipe(res);
+      upstream.on("end", () => onFinish(true));
+      upstream.on("error", () => onFinish(false));
+    })
+    .on("error", () => {
+      onFinish(false);
+      if (!res.headersSent) {
+        res.status(500).json({ message: "Download failed. Please try again." });
+      }
+    });
+};
+
+const mergeToResponse = (videoUrl, audioUrl, res, filename, onFinish) => {
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename="${filename}.mp4"`,
+  );
+  res.setHeader("Content-Type", "application/octet-stream");
+
+  const proc = spawn("ffmpeg", [
+    "-user_agent",
+    USER_AGENT,
+    "-reconnect",
+    "1",
+    "-reconnect_streamed",
+    "1",
+    "-reconnect_delay_max",
+    "5",
+    "-i",
+    videoUrl,
+    "-user_agent",
+    USER_AGENT,
+    "-reconnect",
+    "1",
+    "-reconnect_streamed",
+    "1",
+    "-reconnect_delay_max",
+    "5",
+    "-i",
+    audioUrl,
+    "-c:v",
+    "copy",
+    "-c:a",
+    "copy",
+    "-movflags",
+    "frag_keyframe+empty_moov",
+    "-f",
+    "mp4",
+    "pipe:1",
+  ]);
+
+  proc.stdout.pipe(res);
+
+  let stderr = "";
+  proc.stderr.on("data", (chunk) => {
+    stderr += chunk;
+  });
+
+  proc.on("error", () => {
+    onFinish(false);
+    if (!res.headersSent) {
+      res.status(500).json({ message: "Download failed. Please try again." });
+    }
+  });
+
+  proc.on("close", (code) => {
+    if (code !== 0) {
+      console.error(`ffmpeg merge failed: ${stderr}`);
+    }
+    onFinish(code === 0);
+  });
+};
+
+const runStreamProcess = (url, formatSelector, outputTemplate, extraArgs) => {
   const baseArgs = [
     "-f",
     formatSelector,
@@ -230,7 +403,14 @@ const runStreamProcess = (
   return spawn(YTDLP_BIN, withCookies(baseArgs));
 };
 
-const streamDownload = (url, formatId, res, filename, resolution, onFinish) => {
+const streamDownloadOther = (
+  url,
+  formatId,
+  res,
+  filename,
+  resolution,
+  notifyFinish,
+) => {
   const platform = detectPlatform(url);
   const tempId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const outputTemplate = path.join(os.tmpdir(), `${tempId}.%(ext)s`);
@@ -241,7 +421,64 @@ const streamDownload = (url, formatId, res, filename, resolution, onFinish) => {
       .includes("audio") || String(formatId).startsWith("a-");
 
   const formatSelector = buildFormatSelector(formatId, resolution, isAudioOnly);
-  const clientQueue = platform === "youtube" ? [...YOUTUBE_CLIENTS] : [null];
+  const proc = runStreamProcess(url, formatSelector, outputTemplate, []);
+  let stderr = "";
+
+  proc.stderr.on("data", (chunk) => {
+    stderr += chunk;
+  });
+
+  proc.on("error", (err) => {
+    console.error(`yt-dlp [${platform}] stream spawn error: ${err.message}`);
+    notifyFinish(false);
+    if (!res.headersSent) {
+      res.status(500).json({ message: "Download failed. Please try again." });
+    }
+  });
+
+  proc.on("close", (code) => {
+    if (code !== 0) {
+      console.error(`yt-dlp [${platform}] stream exited with code ${code}`);
+      console.error(`yt-dlp [${platform}] stderr: ${stderr}`);
+      notifyFinish(false);
+      if (!res.headersSent) {
+        res.status(500).json({ message: "Download failed. Please try again." });
+      }
+      return;
+    }
+
+    const dir = os.tmpdir();
+    const matched = fs.readdirSync(dir).find((f) => f.startsWith(tempId));
+    const outputFile = matched ? path.join(dir, matched) : null;
+
+    if (!outputFile || !fs.existsSync(outputFile)) {
+      notifyFinish(false);
+      if (!res.headersSent) {
+        res.status(500).json({ message: "Download failed. Please try again." });
+      }
+      return;
+    }
+
+    notifyFinish(true);
+
+    const ext = path.extname(outputFile).replace(".", "") || "mp4";
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${filename}.${ext}"`,
+    );
+    res.setHeader("Content-Type", "application/octet-stream");
+
+    const readStream = fs.createReadStream(outputFile);
+    readStream.pipe(res);
+
+    const cleanup = () => fs.unlink(outputFile, () => {});
+    readStream.on("close", cleanup);
+    readStream.on("error", cleanup);
+  });
+};
+
+const streamDownload = (url, formatId, res, filename, resolution, onFinish) => {
+  const platform = detectPlatform(url);
 
   let finished = false;
   const notifyFinish = (success) => {
@@ -250,75 +487,55 @@ const streamDownload = (url, formatId, res, filename, resolution, onFinish) => {
     if (onFinish) onFinish(success);
   };
 
-  const tryClient = () => {
-    const client = clientQueue.length > 0 ? clientQueue[0] : null;
-    const extraArgs =
-      client !== undefined && client !== null
-        ? ["--extractor-args", `youtube:player_client=${client}`]
-        : [];
+  const isAudioOnly =
+    String(resolution || "")
+      .toLowerCase()
+      .includes("audio") || String(formatId).startsWith("a-");
 
-    const proc = runStreamProcess(
-      url,
-      formatSelector,
-      outputTemplate,
-      extraArgs,
-    );
-    let stderr = "";
+  if (platform === "youtube") {
+    resolveYoutubeDirectUrls(url, formatId, isAudioOnly)
+      .then((resolved) => {
+        if (!resolved) {
+          notifyFinish(false);
+          if (!res.headersSent) {
+            res
+              .status(500)
+              .json({ message: "Download failed. Please try again." });
+          }
+          return;
+        }
 
-    proc.stderr.on("data", (chunk) => {
-      stderr += chunk;
-    });
+        if (resolved.type === "merge") {
+          mergeToResponse(
+            resolved.videoUrl,
+            resolved.audioUrl,
+            res,
+            filename,
+            notifyFinish,
+          );
+        } else {
+          fetchToResponse(
+            resolved.url,
+            res,
+            filename,
+            resolved.ext,
+            notifyFinish,
+          );
+        }
+      })
+      .catch((error) => {
+        console.error(`youtube direct resolve failed: ${error.message}`);
+        notifyFinish(false);
+        if (!res.headersSent) {
+          res
+            .status(500)
+            .json({ message: "Download failed. Please try again." });
+        }
+      });
+    return;
+  }
 
-    proc.on("error", (err) => {
-      console.error(`yt-dlp [${platform}] stream spawn error: ${err.message}`);
-      handleFailure();
-    });
-
-    const handleFailure = () => {
-      if (clientQueue.length > 1) {
-        clientQueue.shift();
-        return tryClient();
-      }
-      notifyFinish(false);
-      if (!res.headersSent) {
-        res.status(500).json({ message: "Download failed. Please try again." });
-      }
-    };
-
-    proc.on("close", (code) => {
-      if (code !== 0) {
-        console.error(`yt-dlp [${platform}] stream exited with code ${code}`);
-        console.error(`yt-dlp [${platform}] stderr: ${stderr}`);
-        return handleFailure();
-      }
-
-      const dir = os.tmpdir();
-      const matched = fs.readdirSync(dir).find((f) => f.startsWith(tempId));
-      const outputFile = matched ? path.join(dir, matched) : null;
-
-      if (!outputFile || !fs.existsSync(outputFile)) {
-        return handleFailure();
-      }
-
-      notifyFinish(true);
-
-      const ext = path.extname(outputFile).replace(".", "") || "mp4";
-      res.setHeader(
-        "Content-Disposition",
-        `attachment; filename="${filename}.${ext}"`,
-      );
-      res.setHeader("Content-Type", "application/octet-stream");
-
-      const readStream = fs.createReadStream(outputFile);
-      readStream.pipe(res);
-
-      const cleanup = () => fs.unlink(outputFile, () => {});
-      readStream.on("close", cleanup);
-      readStream.on("error", cleanup);
-    });
-  };
-
-  tryClient();
+  streamDownloadOther(url, formatId, res, filename, resolution, notifyFinish);
 };
 
 module.exports = { detectPlatform, extractInfo, streamDownload };
