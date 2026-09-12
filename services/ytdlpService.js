@@ -631,6 +631,22 @@ const buildFormatSelector = (formatId, resolution, isAudioOnly) => {
   return `${formatId}+bestaudio/${formatId}/bestvideo+bestaudio/best`;
 };
 
+const buildYoutubeAdaptiveSelector = (resolution, isAudioOnly) => {
+  if (isAudioOnly) {
+    return "bestaudio/best";
+  }
+  const height = parseHeight(resolution);
+  if (height) {
+    return [
+      `bestvideo[height<=${height}]+bestaudio`,
+      `best[height<=${height}]`,
+      "bestvideo+bestaudio",
+      "best",
+    ].join("/");
+  }
+  return "bestvideo+bestaudio/best";
+};
+
 const runYtdlpProcess = (args) => {
   return new Promise((resolve, reject) => {
     const proc = spawn(YTDLP_BIN, args);
@@ -801,8 +817,8 @@ const extractInfo = async (url) => {
   };
 };
 
-const resolveYoutubeDirectUrls = async (url, formatId, resolution, isAudioOnly) => {
-  const formatSelector = buildFormatSelector(formatId, resolution, isAudioOnly);
+const resolveYoutubeDirectUrls = async (url, resolution, isAudioOnly) => {
+  const formatSelector = buildYoutubeAdaptiveSelector(resolution, isAudioOnly);
   const raw = await runYtdlpJsonWithFormat(url, formatSelector);
 
   if (Array.isArray(raw.requested_formats) && raw.requested_formats.length === 2) {
@@ -1051,7 +1067,7 @@ const streamDownload = (url, formatId, res, filename, resolution, onFinish) => {
       .includes("audio") || String(formatId).startsWith("a-");
 
   if (platform === "youtube") {
-    resolveYoutubeDirectUrls(url, formatId, resolution, isAudioOnly)
+    resolveYoutubeDirectUrls(url, resolution, isAudioOnly)
       .then((resolved) => {
         if (!resolved) {
           notifyFinish(false);
