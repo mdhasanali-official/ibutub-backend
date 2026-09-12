@@ -548,7 +548,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { getCookiesPath } = require("../utils/cookiesSetup");
-const { setFormats, getFormats } = require("./formatCache");
+const { setFormats } = require("./formatCache");
 
 const YTDLP_BIN = "yt-dlp";
 const FILESIZE_LOOKUP_LIMIT = 6;
@@ -695,6 +695,40 @@ const runYtdlpJson = async (url) => {
   throw lastError || new Error("yt-dlp extraction failed");
 };
 
+const runYtdlpJsonWithFormat = async (url, formatSelector) => {
+  const baseArgs = withProxy(
+    withCookies([
+      "-f",
+      formatSelector,
+      "-j",
+      "--no-playlist",
+      "--no-warnings",
+      "--no-check-certificates",
+      "--socket-timeout",
+      "10",
+    ]),
+  );
+
+  let lastError = null;
+  for (const client of YOUTUBE_CLIENTS) {
+    try {
+      const args = [
+        ...baseArgs,
+        "--extractor-args",
+        `youtube:player_client=${client}`,
+        url,
+      ];
+      return await runYtdlpProcess(args);
+    } catch (err) {
+      lastError = err;
+      console.error(
+        `yt-dlp [youtube:${client}] format resolve failed: ${err.message}`,
+      );
+    }
+  }
+  throw lastError || new Error("yt-dlp format resolution failed");
+};
+
 const fetchFilesize = async (url) => {
   if (!url) return null;
   try {
@@ -728,8 +762,6 @@ const extractInfo = async (url) => {
     hasAudio: f.acodec !== "none",
     filesize: f.filesize || f.filesize_approx || null,
     note: f.format_note || "",
-    height: f.height || 0,
-    abr: f.abr || 0,
     _sourceUrl: f.url,
   }));
 
@@ -753,16 +785,11 @@ const extractInfo = async (url) => {
         ext: f.ext,
         hasVideo: f.hasVideo,
         hasAudio: f.hasAudio,
-        height: f.height,
-        abr: f.abr,
-        sourceUrl: f._sourceUrl,
       })),
     );
   }
 
-  const cleanFormats = formats.map(
-    ({ _sourceUrl, height, abr, ...rest }) => rest,
-  );
+  const cleanFormats = formats.map(({ _sourceUrl, ...rest }) => rest);
 
   return {
     platform,
@@ -774,55 +801,25 @@ const extractInfo = async (url) => {
   };
 };
 
-const resolveYoutubeDirectUrls = async (url, formatId, isAudioOnly) => {
-  let formats = getFormats(url);
+const resolveYoutubeDirectUrls = async (url, formatId, resolution, isAudioOnly) => {
+  const formatSelector = buildFormatSelector(formatId, resolution, isAudioOnly);
+  const raw = await runYtdlpJsonWithFormat(url, formatSelector);
 
-  if (!formats) {
-    const raw = await runYtdlpJson(url);
-    formats = (raw.formats || [])
-      .filter((f) => f.vcodec !== "none" || f.acodec !== "none")
-      .map((f) => ({
-        format_id: f.format_id,
-        ext: f.ext,
-        hasVideo: f.vcodec !== "none",
-        hasAudio: f.acodec !== "none",
-        height: f.height || 0,
-        abr: f.abr || 0,
-        sourceUrl: f.url,
-      }));
-    setFormats(url, formats);
+  if (Array.isArray(raw.requested_formats) && raw.requested_formats.length === 2) {
+    const [first, second] = raw.requested_formats;
+    const video = first.vcodec && first.vcodec !== "none" ? first : second;
+    const audio = first.acodec && first.acodec !== "none" ? first : second;
+
+    if (video && audio && video.url && audio.url && video !== audio) {
+      return { type: "merge", videoUrl: video.url, audioUrl: audio.url };
+    }
   }
 
-  const chosen = formats.find((f) => f.format_id === formatId);
-  if (!chosen || !chosen.sourceUrl) return null;
-
-  if (isAudioOnly) {
-    return { type: "single", url: chosen.sourceUrl, ext: chosen.ext || "mp4" };
+  if (raw.url) {
+    return { type: "single", url: raw.url, ext: raw.ext || "mp4" };
   }
 
-  const targetHeight = chosen.height || 0;
-
-  const bestVideo = formats
-    .filter((f) => f.hasVideo && !f.hasAudio && f.sourceUrl)
-    .sort(
-      (a, b) =>
-        Math.abs((a.height || 0) - targetHeight) -
-        Math.abs((b.height || 0) - targetHeight),
-    )[0];
-
-  const bestAudio = formats
-    .filter((f) => f.hasAudio && !f.hasVideo && f.sourceUrl)
-    .sort((a, b) => (b.abr || 0) - (a.abr || 0))[0];
-
-  if (bestVideo && bestAudio) {
-    return {
-      type: "merge",
-      videoUrl: bestVideo.sourceUrl,
-      audioUrl: bestAudio.sourceUrl,
-    };
-  }
-
-  return { type: "single", url: chosen.sourceUrl, ext: chosen.ext || "mp4" };
+  return null;
 };
 
 const fetchToResponse = (
@@ -1054,7 +1051,7 @@ const streamDownload = (url, formatId, res, filename, resolution, onFinish) => {
       .includes("audio") || String(formatId).startsWith("a-");
 
   if (platform === "youtube") {
-    resolveYoutubeDirectUrls(url, formatId, isAudioOnly)
+    resolveYoutubeDirectUrls(url, formatId, resolution, isAudioOnly)
       .then((resolved) => {
         if (!resolved) {
           notifyFinish(false);
