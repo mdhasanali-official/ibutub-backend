@@ -639,8 +639,8 @@ const buildYoutubeAdaptiveSelector = (resolution, isAudioOnly) => {
   if (height) {
     return [
       `bestvideo[height<=${height}]+bestaudio`,
+      `bestvideo+bestaudio`,
       `best[height<=${height}]`,
-      "bestvideo+bestaudio",
       "best",
     ].join("/");
   }
@@ -821,10 +821,21 @@ const resolveYoutubeDirectUrls = async (url, resolution, isAudioOnly) => {
   const formatSelector = buildYoutubeAdaptiveSelector(resolution, isAudioOnly);
   const raw = await runYtdlpJsonWithFormat(url, formatSelector);
 
-  if (Array.isArray(raw.requested_formats) && raw.requested_formats.length === 2) {
+  const requestedCount = Array.isArray(raw.requested_formats)
+    ? raw.requested_formats.length
+    : 0;
+  console.error(
+    `resolveYoutubeDirectUrls debug: selector="${formatSelector}" resolved_format_id=${raw.format_id} resolved_height=${raw.height} requestedFormatsCount=${requestedCount} topUrlPresent=${Boolean(raw.url)}`,
+  );
+
+  if (requestedCount === 2) {
     const [first, second] = raw.requested_formats;
     const video = first.vcodec && first.vcodec !== "none" ? first : second;
     const audio = first.acodec && first.acodec !== "none" ? first : second;
+
+    console.error(
+      `resolveYoutubeDirectUrls debug: video_itag=${video && video.format_id} video_url_present=${Boolean(video && video.url)} audio_itag=${audio && audio.format_id} audio_url_present=${Boolean(audio && audio.url)}`,
+    );
 
     if (video && audio && video.url && audio.url && video !== audio) {
       return { type: "merge", videoUrl: video.url, audioUrl: audio.url };
