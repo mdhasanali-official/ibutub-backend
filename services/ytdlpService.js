@@ -555,6 +555,7 @@ const FILESIZE_LOOKUP_LIMIT = 6;
 const FILESIZE_TIMEOUT_MS = 2000;
 
 const YOUTUBE_CLIENTS = ["android", "ios", "web", "tv"];
+const YOUTUBE_STREAM_CLIENTS = ["web", "tv", "android", "ios"];
 
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
@@ -726,7 +727,7 @@ const runYtdlpJsonWithFormat = async (url, formatSelector) => {
   );
 
   let lastError = null;
-  for (const client of YOUTUBE_CLIENTS) {
+  for (const client of YOUTUBE_STREAM_CLIENTS) {
     try {
       const args = [
         ...baseArgs,
@@ -734,7 +735,17 @@ const runYtdlpJsonWithFormat = async (url, formatSelector) => {
         `youtube:player_client=${client}`,
         url,
       ];
-      return await runYtdlpProcess(args);
+      const result = await runYtdlpProcess(args);
+      const requestedCount = Array.isArray(result.requested_formats)
+        ? result.requested_formats.length
+        : 0;
+      console.error(
+        `runYtdlpJsonWithFormat debug: client=${client} requestedFormatsCount=${requestedCount} resolved_format_id=${result.format_id} resolved_height=${result.height}`,
+      );
+      if (requestedCount === 2) {
+        return result;
+      }
+      lastError = lastError || new Error("No adaptive pair from this client");
     } catch (err) {
       lastError = err;
       console.error(
@@ -742,7 +753,27 @@ const runYtdlpJsonWithFormat = async (url, formatSelector) => {
       );
     }
   }
-  throw lastError || new Error("yt-dlp format resolution failed");
+
+  const baseArgsFallback = withProxy(
+    withCookies([
+      "-f",
+      formatSelector,
+      "-j",
+      "--no-playlist",
+      "--no-warnings",
+      "--no-check-certificates",
+      "--socket-timeout",
+      "10",
+      "--extractor-args",
+      "youtube:player_client=web",
+    ]),
+  );
+
+  try {
+    return await runYtdlpProcess([...baseArgsFallback, url]);
+  } catch (err) {
+    throw lastError || err;
+  }
 };
 
 const fetchFilesize = async (url) => {
@@ -821,21 +852,13 @@ const resolveYoutubeDirectUrls = async (url, resolution, isAudioOnly) => {
   const formatSelector = buildYoutubeAdaptiveSelector(resolution, isAudioOnly);
   const raw = await runYtdlpJsonWithFormat(url, formatSelector);
 
-  const requestedCount = Array.isArray(raw.requested_formats)
-    ? raw.requested_formats.length
-    : 0;
-  console.error(
-    `resolveYoutubeDirectUrls debug: selector="${formatSelector}" resolved_format_id=${raw.format_id} resolved_height=${raw.height} requestedFormatsCount=${requestedCount} topUrlPresent=${Boolean(raw.url)}`,
-  );
-
-  if (requestedCount === 2) {
+  if (
+    Array.isArray(raw.requested_formats) &&
+    raw.requested_formats.length === 2
+  ) {
     const [first, second] = raw.requested_formats;
     const video = first.vcodec && first.vcodec !== "none" ? first : second;
     const audio = first.acodec && first.acodec !== "none" ? first : second;
-
-    console.error(
-      `resolveYoutubeDirectUrls debug: video_itag=${video && video.format_id} video_url_present=${Boolean(video && video.url)} audio_itag=${audio && audio.format_id} audio_url_present=${Boolean(audio && audio.url)}`,
-    );
 
     if (video && audio && video.url && audio.url && video !== audio) {
       return { type: "merge", videoUrl: video.url, audioUrl: audio.url };
