@@ -100,9 +100,18 @@ exports.getAdminDashboardStats = async (req, res) => {
 exports.getDownloadsChart = async (req, res) => {
   try {
     const days = parseInt(req.query.days) || 7;
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - (days - 1));
-    startDate.setHours(0, 0, 0, 0);
+    const now = new Date();
+    const startDate = new Date(
+      Date.UTC(
+        now.getUTCFullYear(),
+        now.getUTCMonth(),
+        now.getUTCDate() - (days - 1),
+        0,
+        0,
+        0,
+        0,
+      ),
+    );
 
     const result = await DownloadHistory.aggregate([
       { $match: { status: "downloaded", createdAt: { $gte: startDate } } },
@@ -118,10 +127,16 @@ exports.getDownloadsChart = async (req, res) => {
     const chart = [];
     for (let i = 0; i < days; i++) {
       const d = new Date(startDate);
-      d.setDate(d.getDate() + i);
+      d.setUTCDate(d.getUTCDate() + i);
       const key = d.toISOString().split("T")[0];
       chart.push({
-        d: d.toLocaleDateString("en-US", { weekday: "short" }),
+        d:
+          days > 7
+            ? `${d.getUTCDate()}/${d.getUTCMonth() + 1}`
+            : d.toLocaleDateString("en-US", {
+                weekday: "short",
+                timeZone: "UTC",
+              }),
         v: map.get(key) || 0,
       });
     }
@@ -130,7 +145,7 @@ exports.getDownloadsChart = async (req, res) => {
       message: "Downloads chart fetched successfully",
       chart,
     });
-  } catch {
+  } catch (error) {
     return res.status(500).json({ message: "Failed to fetch downloads chart" });
   }
 };
