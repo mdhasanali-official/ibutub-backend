@@ -58,19 +58,49 @@ exports.getAdminProfile = async (req, res) => {
 
 exports.updateAdminProfile = async (req, res) => {
   try {
-    const { name } = req.body;
+    const { name, currentPassword, newPassword } = req.body;
 
-    const admin = await SuperAdmin.findByIdAndUpdate(
-      req.admin.id,
-      { name },
-      { new: true },
-    ).select("-password");
-
+    const admin = await SuperAdmin.findById(req.admin.id);
     if (!admin) return res.status(404).json({ message: "Admin not found" });
+
+    if (name && name.trim()) {
+      admin.name = name.trim();
+    }
+
+    if (newPassword) {
+      if (!currentPassword) {
+        return res
+          .status(400)
+          .json({ message: "Current password is required to set new password" });
+      }
+
+      const isMatch = await bcrypt.compare(currentPassword, admin.password);
+      if (!isMatch) {
+        return res
+          .status(400)
+          .json({ message: "Current password does not match" });
+      }
+
+      if (newPassword.length < 6) {
+        return res
+          .status(400)
+          .json({ message: "New password must be at least 6 characters" });
+      }
+
+      admin.password = await bcrypt.hash(newPassword, 10);
+    }
+
+    await admin.save();
 
     return res.status(200).json({
       message: "Profile updated successfully",
-      admin,
+      admin: {
+        id: admin._id,
+        email: admin.email,
+        name: admin.name,
+        profileImage: admin.profileImage,
+        role: "super_admin",
+      },
     });
   } catch {
     return res.status(500).json({ message: "Failed to update profile" });
@@ -100,7 +130,7 @@ exports.uploadAdminProfileImage = async (req, res) => {
       profileImage: imageUrl,
     });
   } catch (error) {
-    if (error.message.includes("File too large")) {
+    if (error.message && error.message.includes("File too large")) {
       return res.status(400).json({ message: "Image must be less than 100KB" });
     }
     return res.status(500).json({ message: "Failed to upload image" });
