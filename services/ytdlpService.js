@@ -753,6 +753,111 @@ const extractInfo = async (url) => {
     (f) => f.vcodec !== "none" || f.acodec !== "none",
   );
 
+  if (rawFormats.length === 0) {
+    const entries = Array.isArray(raw.entries) ? raw.entries : [];
+    if (entries.length > 0) {
+      const photoFormats = entries
+        .map((entry, idx) => {
+          const bestImg =
+            entry.url ||
+            (entry.thumbnails &&
+              entry.thumbnails[entry.thumbnails.length - 1]?.url) ||
+            entry.thumbnail;
+          return {
+            format_id: `photo-${idx + 1}`,
+            ext: "jpg",
+            resolution: `Photo ${idx + 1}`,
+            hasVideo: false,
+            hasAudio: false,
+            isImage: true,
+            filesize: null,
+            note: `HD Photo ${idx + 1}`,
+            abr: 0,
+            _sourceUrl: bestImg,
+          };
+        })
+        .filter((f) => f._sourceUrl);
+
+      if (photoFormats.length > 0) {
+        setFormats(
+          url,
+          photoFormats.map((f) => ({
+            format_id: f.format_id,
+            ext: f.ext,
+            hasVideo: false,
+            hasAudio: false,
+            isImage: true,
+            sourceUrl: f._sourceUrl,
+          })),
+        );
+
+        const cleanFormats = photoFormats.map(
+          ({ _sourceUrl, abr, ...rest }) => rest,
+        );
+
+        return {
+          platform,
+          title: raw.title || "Photo Album",
+          thumbnail: photoFormats[0]?._sourceUrl || raw.thumbnail || null,
+          duration: null,
+          uploader: raw.uploader || null,
+          formats: cleanFormats,
+        };
+      }
+    }
+
+    const singleImg =
+      (raw.thumbnails && raw.thumbnails[raw.thumbnails.length - 1]?.url) ||
+      raw.thumbnail ||
+      raw.url;
+
+    if (singleImg) {
+      const photoFormat = {
+        format_id: "photo-1",
+        ext: "jpg",
+        resolution: "HD Photo",
+        hasVideo: false,
+        hasAudio: false,
+        isImage: true,
+        filesize: null,
+        note: "HD Photo",
+        abr: 0,
+        _sourceUrl: singleImg,
+      };
+
+      setFormats(url, [
+        {
+          format_id: photoFormat.format_id,
+          ext: photoFormat.ext,
+          hasVideo: false,
+          hasAudio: false,
+          isImage: true,
+          sourceUrl: photoFormat._sourceUrl,
+        },
+      ]);
+
+      return {
+        platform,
+        title: raw.title || "Photo Post",
+        thumbnail: singleImg,
+        duration: null,
+        uploader: raw.uploader || null,
+        formats: [
+          {
+            format_id: photoFormat.format_id,
+            ext: photoFormat.ext,
+            resolution: photoFormat.resolution,
+            hasVideo: false,
+            hasAudio: false,
+            isImage: true,
+            filesize: null,
+            note: photoFormat.note,
+          },
+        ],
+      };
+    }
+  }
+
   const formats = rawFormats.map((f) => ({
     format_id: f.format_id,
     ext: f.ext,
@@ -1072,6 +1177,14 @@ const streamDownload = (url, formatId, res, filename, resolution, onFinish) => {
     String(resolution || "")
       .toLowerCase()
       .includes("audio") || String(formatId).startsWith("a-");
+
+  const cachedFormats = getFormats(url);
+  const chosenFormat = cachedFormats?.find((f) => f.format_id === formatId) || cachedFormats?.[0];
+  if (chosenFormat?.isImage && chosenFormat?.sourceUrl) {
+    const ext = chosenFormat.ext || "jpg";
+    fetchToResponse(chosenFormat.sourceUrl, res, filename, ext, notifyFinish);
+    return;
+  }
 
   if (platform === "threads") {
     const formats = getFormats(url);
