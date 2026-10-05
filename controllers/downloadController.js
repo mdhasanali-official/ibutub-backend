@@ -34,7 +34,10 @@ exports.extractVideo = async (req, res) => {
 
     if (!url) return res.status(400).json({ message: "URL is required" });
 
-    const isSupported = SUPPORTED_HOSTS.some((host) => url.includes(host));
+    const cleanUrl = String(url).toLowerCase().trim();
+    const isSupported = SUPPORTED_HOSTS.some((host) =>
+      cleanUrl.includes(host.toLowerCase()),
+    );
     if (!isSupported)
       return res.status(400).json({ message: "Unsupported platform" });
 
