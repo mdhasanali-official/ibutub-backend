@@ -556,6 +556,7 @@ const os = require("os");
 const path = require("path");
 const { getCookiesPath } = require("../utils/cookiesSetup");
 const { setFormats, getFormats } = require("./formatCache");
+const { extractThreadsInfo } = require("./threadsService");
 
 const YTDLP_BIN = "yt-dlp";
 const FILESIZE_LOOKUP_LIMIT = 6;
@@ -736,6 +737,16 @@ const fetchFilesize = async (url) => {
 
 const extractInfo = async (url) => {
   const platform = detectPlatform(url);
+
+  if (platform === "threads") {
+    try {
+      return await extractThreadsInfo(url);
+    } catch (threadsErr) {
+      console.warn(`Threads extraction failed: ${threadsErr.message}`);
+      throw threadsErr;
+    }
+  }
+
   const raw = await runYtdlpJson(url);
 
   const rawFormats = (raw.formats || []).filter(
@@ -1061,6 +1072,16 @@ const streamDownload = (url, formatId, res, filename, resolution, onFinish) => {
     String(resolution || "")
       .toLowerCase()
       .includes("audio") || String(formatId).startsWith("a-");
+
+  if (platform === "threads") {
+    const formats = getFormats(url);
+    const chosen = formats?.find((f) => f.format_id === formatId) || formats?.[0];
+    if (chosen?.sourceUrl) {
+      const ext = isAudioOnly ? "mp3" : (chosen.ext || "mp4");
+      fetchToResponse(chosen.sourceUrl, res, filename, ext, notifyFinish);
+      return;
+    }
+  }
 
   if (platform === "youtube") {
     resolveYoutubeDirectUrls(url, formatId, isAudioOnly)
