@@ -90,7 +90,7 @@ async function extractThreadsInfo(url) {
   }
 
   if (!videoUrl) {
-    throw new Error("No video found in this Threads post (it may be a text/photo post or require login)");
+    throw new Error("Threads video could not be loaded directly by the server. Please use the ibutub Chrome Extension on this post to download in 1 click.");
   }
 
   let uploader = "Threads User";
