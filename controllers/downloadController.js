@@ -15,6 +15,7 @@ const SUPPORTED_HOSTS = [
   "pinterest.com",
   "pin.it",
   "threads.net",
+  "threads.com",
   "linkedin.com",
 ];
 

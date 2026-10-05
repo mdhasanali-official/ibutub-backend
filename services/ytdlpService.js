@@ -586,7 +586,8 @@ const detectPlatform = (url) => {
   if (url.includes("reddit.com")) return "reddit";
   if (url.includes("pinterest.com") || url.includes("pin.it"))
     return "pinterest";
-  if (url.includes("threads.net")) return "threads";
+  if (url.includes("threads.net") || url.includes("threads.com"))
+    return "threads";
   if (url.includes("linkedin.com")) return "linkedin";
   return "unknown";
 };
@@ -670,13 +671,27 @@ const runYtdlpJson = async (url) => {
     "--no-warnings",
     "--no-check-certificates",
     "--socket-timeout",
-    "10",
+    "15",
+    "--user-agent",
+    USER_AGENT,
   ];
 
   if (platform !== "youtube") {
-    const baseArgs = withCookies(commonArgs);
+    const proxyUrl = getProxyUrl();
+    if (proxyUrl) {
+      try {
+        const baseArgs = withProxy(withCookies(commonArgs));
+        return await runYtdlpProcess([...baseArgs, url]);
+      } catch (err) {
+        console.warn(
+          `yt-dlp [${platform}] with proxy failed: ${err.message}, retrying direct...`,
+        );
+      }
+    }
+
+    const directArgs = withCookies(commonArgs);
     try {
-      return await runYtdlpProcess([...baseArgs, url]);
+      return await runYtdlpProcess([...directArgs, url]);
     } catch (err) {
       console.error(`yt-dlp [${platform}] failed: ${err.message}`);
       throw err;
@@ -947,13 +962,15 @@ const runStreamProcess = (url, formatSelector, outputTemplate, extraArgs) => {
     "--no-check-certificates",
     "--concurrent-fragments",
     "4",
+    "--user-agent",
+    USER_AGENT,
     ...extraArgs,
     "-o",
     outputTemplate,
     url,
   ];
 
-  return spawn(YTDLP_BIN, withCookies(baseArgs));
+  return spawn(YTDLP_BIN, withProxy(withCookies(baseArgs)));
 };
 
 const streamDownloadOther = (
