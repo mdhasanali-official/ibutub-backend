@@ -18,7 +18,7 @@ const uploadTextFile = async (filename, content) => {
     const root = process.env.FTP_ROOT || "/";
     if (root && root !== "/") {
       try {
-        await client.cd(root);
+        await client.cd(root); 
       } catch {
         console.log(`FTP: could not cd to ${root}, staying at login dir`);
       }
