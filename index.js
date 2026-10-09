@@ -1,4 +1,3 @@
-//index.js
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
@@ -70,6 +69,6 @@ app.use("/api/track", trackRoutes);
 app.use("/api", settingsRouter);
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
+app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server on http://localhost:${PORT}`);
 });
