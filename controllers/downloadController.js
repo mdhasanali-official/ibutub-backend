@@ -1,4 +1,3 @@
-//controllers/downloadController.js
 const { extractInfo, streamDownload } = require("../services/ytdlpService");
 const DownloadHistory = require("../models/DownloadHistory");
 
@@ -41,7 +40,12 @@ exports.extractVideo = async (req, res) => {
     if (!isSupported)
       return res.status(400).json({ message: "Unsupported platform" });
 
-    const info = await extractInfo(url);
+    let info;
+    try {
+      info = await extractInfo(url);
+    } catch (firstErr) {
+      info = await extractInfo(url);
+    }
 
     await DownloadHistory.create({
       url,
@@ -49,14 +53,13 @@ exports.extractVideo = async (req, res) => {
       title: info.title,
       ip: req.ip,
       status: "extracted",
-    });
+    }).catch(() => {});
 
     return res.status(200).json({
       message: "Video info fetched successfully",
       data: info,
     });
   } catch (error) {
-    console.error(`extractVideo failed: ${error.message}`);
     return res.status(500).json({
       message: "Failed to extract video info",
       error: error.message,
