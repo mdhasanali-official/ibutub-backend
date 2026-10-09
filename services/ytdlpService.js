@@ -370,6 +370,9 @@ const extractInfo = async (url) => {
     }
   }
 
+  const bestAudio = audioFormats.sort((a, b) => (b.abr || 0) - (a.abr || 0))[0];
+  const aacAudio = audioFormats.find((a) => (a.ext === "m4a" || a.acodec?.includes("mp4a") || a.acodec?.includes("aac"))) || bestAudio;
+
   const sortedHeights = Array.from(formatsMap.keys()).sort((a, b) => b - a);
   const videoFormats = sortedHeights.map((h) => {
     const f = formatsMap.get(h);
@@ -385,21 +388,25 @@ const extractInfo = async (url) => {
     else if (h === 144) note = "144p";
 
     const calcSize = f.filesize || f.filesize_approx || (f.tbr && raw.duration ? Math.round((f.tbr * 1024 * raw.duration) / 8) : null);
+    const hasAudio = f.acodec !== "none";
 
     return {
       format_id: f.format_id,
       ext: f.ext || "mp4",
       resolution: `${h}p`,
       hasVideo: true,
-      hasAudio: f.acodec !== "none",
+      hasAudio: hasAudio,
       filesize: calcSize,
       note: note,
       abr: f.abr || 0,
       height: h,
+      url: f.url,
+      videoUrl: f.url,
+      audioUrl: hasAudio ? null : (aacAudio?.url || bestAudio?.url || null),
+      httpHeaders: raw.http_headers || null,
     };
   });
 
-  const bestAudio = audioFormats.sort((a, b) => (b.abr || 0) - (a.abr || 0))[0];
   const audioItem = {
     format_id: bestAudio ? bestAudio.format_id : "audio_mp3",
     ext: "mp3",
@@ -410,6 +417,8 @@ const extractInfo = async (url) => {
     filesize: bestAudio ? (bestAudio.filesize || bestAudio.filesize_approx || (bestAudio.abr && raw.duration ? Math.round((bestAudio.abr * 1024 * raw.duration) / 8) : null)) : null,
     note: "MP3 Audio",
     abr: bestAudio ? bestAudio.abr || 320 : 320,
+    url: bestAudio?.url || aacAudio?.url || null,
+    httpHeaders: raw.http_headers || null,
   };
 
   const finalFormats = videoFormats.length > 0 ? [...videoFormats, audioItem] : rawFormats.map((f) => ({
@@ -421,6 +430,10 @@ const extractInfo = async (url) => {
     filesize: f.filesize || f.filesize_approx || null,
     note: f.format_note || `${f.height || "" }p`,
     abr: f.abr || 0,
+    url: f.url,
+    videoUrl: f.url,
+    audioUrl: f.acodec !== "none" ? null : (aacAudio?.url || bestAudio?.url || null),
+    httpHeaders: raw.http_headers || null,
   }));
 
   return {
