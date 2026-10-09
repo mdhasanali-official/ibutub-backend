@@ -13,10 +13,10 @@ const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
 const getProxyUrl = () => {
-  const host = process.env.PROXY_HOST;
-  const port = process.env.PROXY_PORT;
-  const username = process.env.PROXY_USERNAME;
-  const password = process.env.PROXY_PASSWORD;
+  const host = process.env.PROXY_HOST || "p.webshare.io";
+  const port = process.env.PROXY_PORT || "80";
+  const username = process.env.PROXY_USERNAME || "sdnvqtqt-rotate";
+  const password = process.env.PROXY_PASSWORD || "luum5asas0qc";
 
   if (!host || !port || !username || !password) return null;
   return `http://${username}:${password}@${host}:${port}`;
@@ -143,7 +143,25 @@ const runYtdlpJson = async (url) => {
     USER_AGENT,
   ];
 
+  const proxyUrl = getProxyUrl();
+
   if (platform === "youtube") {
+    if (proxyUrl) {
+      try {
+        const proxyArgs = withProxy(withCookies([
+          ...commonArgs,
+          "--extractor-args",
+          "youtube:player_client=android,web,mweb,ios,android_vr",
+          url,
+        ]));
+        const json = await runYtdlpProcess(proxyArgs);
+        if (json && (json.formats || []).length > 2) {
+          return json;
+        }
+      } catch (err) {
+      }
+    }
+
     try {
       const cookieArgs = withCookies([...commonArgs, url]);
       const json = await runYtdlpProcess(cookieArgs);
@@ -176,7 +194,6 @@ const runYtdlpJson = async (url) => {
       }
     }
 
-    const proxyUrl = getProxyUrl();
     if (proxyUrl) {
       try {
         const proxyArgs = withProxy(withCookies([...commonArgs, url]));
@@ -188,17 +205,17 @@ const runYtdlpJson = async (url) => {
     throw new Error("Failed to extract YouTube video. Please check URL.");
   }
 
+  if (proxyUrl) {
+    try {
+      const proxyArgs = withProxy(withCookies([...commonArgs, url]));
+      return await runYtdlpProcess(proxyArgs);
+    } catch (proxyErr) {
+    }
+  }
+
   try {
     return await runYtdlpProcess([...commonArgs, url]);
   } catch (err) {
-    const proxyUrl = getProxyUrl();
-    if (proxyUrl) {
-      try {
-        const proxyArgs = withProxy(withCookies([...commonArgs, url]));
-        return await runYtdlpProcess(proxyArgs);
-      } catch (proxyErr) {
-      }
-    }
     throw err;
   }
 };
@@ -501,7 +518,7 @@ const runStreamProcess = (url, formatSelector, outputTemplate, isAudioOnly) => {
     url,
   ];
 
-  return spawn(YTDLP_BIN, withCookies(baseArgs));
+  return spawn(YTDLP_BIN, withProxy(withCookies(baseArgs)));
 };
 
 const streamDownloadOther = (
