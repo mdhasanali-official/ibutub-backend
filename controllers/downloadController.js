@@ -1,4 +1,8 @@
-const { extractInfo, streamDownload } = require("../services/ytdlpService");
+const { extractInfo, streamDownload, detectPlatform } = require("../services/ytdlpService");
+const {
+  isRapidApiConfigured,
+  extractInfoRapidApi,
+} = require("../services/rapidApiService");
 const DownloadHistory = require("../models/DownloadHistory");
 
 const SUPPORTED_HOSTS = [
@@ -44,7 +48,27 @@ exports.extractVideo = async (req, res) => {
     try {
       info = await extractInfo(url);
     } catch (firstErr) {
-      info = await extractInfo(url);
+      try {
+        info = await extractInfo(url);
+      } catch (secondErr) {
+        if (isRapidApiConfigured()) {
+          console.warn(
+            "yt-dlp extraction failed, attempting RapidAPI fallback:",
+            secondErr.message,
+          );
+          info = await extractInfoRapidApi(url, detectPlatform(url));
+        } else {
+          throw secondErr;
+        }
+      }
+    }
+
+    if ((!info || !info.formats || info.formats.length === 0) && isRapidApiConfigured()) {
+      try {
+        info = await extractInfoRapidApi(url, detectPlatform(url));
+      } catch (e) {
+        console.warn("RapidAPI fallback after empty formats failed:", e.message);
+      }
     }
 
     await DownloadHistory.create({

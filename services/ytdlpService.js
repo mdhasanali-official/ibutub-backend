@@ -558,26 +558,58 @@ const streamDownloadOther = (
   const formatSelector = buildFormatSelector(formatId, resolution, isAudioOnly);
   const proc = runStreamProcess(url, formatSelector, outputTemplate, isAudioOnly);
   let stderr = "";
+  const tryRapidApiFallback = async () => {
+    try {
+      const {
+        isRapidApiConfigured,
+        getRapidDownloadUrl,
+        pipeStreamToClient,
+      } = require("./rapidApiService");
+      if (isRapidApiConfigured()) {
+        console.log(
+          `yt-dlp stream issue on [${platform}]. Attempting RapidAPI fallback...`,
+        );
+        const rapidData = await getRapidDownloadUrl(url, formatId, resolution);
+        pipeStreamToClient(
+          rapidData.downloadUrl,
+          res,
+          filename,
+          rapidData.ext,
+          notifyFinish,
+        );
+        return true;
+      }
+    } catch (fallbackErr) {
+      console.error("RapidAPI stream fallback failed:", fallbackErr.message);
+    }
+    return false;
+  };
 
   proc.stderr.on("data", (chunk) => {
     stderr += chunk;
   });
 
-  proc.on("error", (err) => {
+  proc.on("error", async (err) => {
     console.error(`yt-dlp [${platform}] stream spawn error: ${err.message}`);
-    notifyFinish(false);
-    if (!res.headersSent) {
-      res.status(500).json({ message: "Download failed. Please try again." });
-    }
-  });
-
-  proc.on("close", (code) => {
-    if (code !== 0) {
-      console.error(`yt-dlp [${platform}] stream exited with code ${code}`);
-      console.error(`yt-dlp [${platform}] stderr: ${stderr}`);
+    const recovered = await tryRapidApiFallback();
+    if (!recovered) {
       notifyFinish(false);
       if (!res.headersSent) {
         res.status(500).json({ message: "Download failed. Please try again." });
+      }
+    }
+  });
+
+  proc.on("close", async (code) => {
+    if (code !== 0) {
+      console.error(`yt-dlp [${platform}] stream exited with code ${code}`);
+      console.error(`yt-dlp [${platform}] stderr: ${stderr}`);
+      const recovered = await tryRapidApiFallback();
+      if (!recovered) {
+        notifyFinish(false);
+        if (!res.headersSent) {
+          res.status(500).json({ message: "Download failed. Please try again." });
+        }
       }
       return;
     }
@@ -587,9 +619,12 @@ const streamDownloadOther = (
     const outputFile = matched ? path.join(dir, matched) : null;
 
     if (!outputFile || !fs.existsSync(outputFile)) {
-      notifyFinish(false);
-      if (!res.headersSent) {
-        res.status(500).json({ message: "Download failed. Please try again." });
+      const recovered = await tryRapidApiFallback();
+      if (!recovered) {
+        notifyFinish(false);
+        if (!res.headersSent) {
+          res.status(500).json({ message: "Download failed. Please try again." });
+        }
       }
       return;
     }
@@ -625,6 +660,45 @@ const streamDownload = (url, formatId, res, filename, resolution, onFinish) => {
 
   const cachedFormats = getFormats(url);
   const chosenFormat = cachedFormats?.find((f) => f.format_id === formatId) || cachedFormats?.[0];
+
+  if (String(formatId).startsWith("rapid-") || chosenFormat?.rapidFormat) {
+    const {
+      pipeStreamToClient,
+      getRapidDownloadUrl,
+    } = require("./rapidApiService");
+    if (chosenFormat?.sourceUrl) {
+      const ext = chosenFormat.ext || "mp4";
+      pipeStreamToClient(
+        chosenFormat.sourceUrl,
+        res,
+        filename,
+        ext,
+        notifyFinish,
+      );
+      return;
+    }
+    getRapidDownloadUrl(url, formatId, resolution)
+      .then((rapidData) => {
+        pipeStreamToClient(
+          rapidData.downloadUrl,
+          res,
+          filename,
+          rapidData.ext,
+          notifyFinish,
+        );
+      })
+      .catch((err) => {
+        console.error("RapidAPI direct stream error:", err.message);
+        notifyFinish(false);
+        if (!res.headersSent) {
+          res
+            .status(500)
+            .json({ message: "Download failed. Please try again." });
+        }
+      });
+    return;
+  }
+
   if (chosenFormat?.isImage && chosenFormat?.sourceUrl) {
     const ext = chosenFormat.ext || "jpg";
     fetchToResponse(chosenFormat.sourceUrl, res, filename, ext, notifyFinish);
